@@ -19,7 +19,7 @@ namespace PandanciClone
 
         public bool Due
         {
-            get { return NextReview != DateTime.MinValue && NextReview <= DateTime.Now; }
+            get { return !Flag1 && NextReview != DateTime.MinValue && NextReview <= DateTime.Now; }
         }
 
         public static WordCard Parse(string line)

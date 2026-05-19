@@ -31,8 +31,10 @@ namespace PandanciClone
         private WordCard _linkStartCard;
         private WordCard _dragCard;
         private TextNote _dragNote;
+        private TextNote _resizeNote;
         private Point _dragStartMouse;
         private Point _dragStartLocation;
+        private Size _resizeStartSize;
         private bool _dragMoved;
         private bool _panning;
         private Point _panStartClient;
@@ -62,7 +64,18 @@ namespace PandanciClone
             Height = 820;
             Font = new Font("Microsoft YaHei UI", 9F);
 
+            TableLayoutPanel mainLayout = new TableLayoutPanel();
+            mainLayout.Dock = DockStyle.Fill;
+            mainLayout.ColumnCount = 1;
+            mainLayout.RowCount = 3;
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            Controls.Add(mainLayout);
+
             MenuStrip menu = new MenuStrip();
+            menu.Dock = DockStyle.Fill;
+            menu.Margin = new Padding(0);
             ToolStripMenuItem file = new ToolStripMenuItem("文件");
             file.DropDownItems.Add("打开", null, OnOpen);
             file.DropDownItems.Add("保存", null, delegate { SaveCurrentFile(); });
@@ -71,92 +84,115 @@ namespace PandanciClone
             menu.Items.Add(file);
             menu.Items.Add(new ToolStripMenuItem("帮助", null, delegate
             {
-                MessageBox.Show("右键画布可添加单词或笔记；右键单词可复习、查词、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
+                MessageBox.Show("右键画布可添加单词或笔记；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布；选中笔记后拖右下角可调整大小。\r\nCtrl+X：存储当前选中单词。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
             }));
-            Controls.Add(menu);
+            mainLayout.Controls.Add(menu, 0, 0);
             MainMenuStrip = menu;
 
             FlowLayoutPanel toolbar = new FlowLayoutPanel();
-            toolbar.Dock = DockStyle.Top;
-            toolbar.Height = 46;
+            toolbar.Dock = DockStyle.Fill;
+            toolbar.Margin = new Padding(0);
             toolbar.Padding = new Padding(8, 8, 8, 4);
             toolbar.WrapContents = false;
 
             AddToolbarButton(toolbar, "下个复习", delegate { SelectNextDue(); });
-            AddToolbarButton(toolbar, "统计", delegate { UpdateStats(); MessageBox.Show(_statsLabel.Text, "统计"); });
+            AddToolbarButton(toolbar, "统计", delegate { UpdateStats(); RefreshMapViews(); MessageBox.Show(_statsLabel.Text, "统计"); });
             AddToolbarButton(toolbar, "查词", delegate { LookupSelected(); });
             AddToolbarButton(toolbar, "已记住", delegate { MarkSelected(true); });
-            AddToolbarButton(toolbar, "未记住", delegate { MarkSelected(false); });
+            AddToolbarButton(toolbar, "待学习", delegate { MarkSelected(false); });
 
             _statsLabel = new Label();
             _statsLabel.AutoSize = true;
             _statsLabel.Padding = new Padding(12, 8, 0, 0);
             toolbar.Controls.Add(_statsLabel);
-            Controls.Add(toolbar);
+            mainLayout.Controls.Add(toolbar, 0, 1);
 
             SplitContainer root = new SplitContainer();
             _rootSplit = root;
             root.Dock = DockStyle.Fill;
+            root.Margin = new Padding(0);
             root.FixedPanel = FixedPanel.Panel1;
             root.Panel1MinSize = 110;
             root.SplitterWidth = 4;
             root.SplitterMoved += delegate { ClampLeftPanelWidth(); };
-            Controls.Add(root);
-            root.BringToFront();
+            mainLayout.Controls.Add(root, 0, 2);
 
-            Panel left = new Panel();
+            TableLayoutPanel left = new TableLayoutPanel();
             left.Dock = DockStyle.Fill;
+            left.Margin = new Padding(0);
+            left.ColumnCount = 1;
+            left.RowCount = 6;
+            left.Padding = new Padding(6, 4, 6, 6);
+            left.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
+            left.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
+            left.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
+            left.RowStyles.Add(new RowStyle(SizeType.Absolute, 120F));
+            left.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
+            left.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.Panel1.Controls.Add(left);
-
-            Label historyLabel = new Label();
-            historyLabel.Text = "搜索结果";
-            historyLabel.Dock = DockStyle.Top;
-            historyLabel.Height = 24;
-            left.Controls.Add(historyLabel);
-
-            _historyBox = new ListBox();
-            _historyBox.Dock = DockStyle.Top;
-            _historyBox.Height = 120;
-            _historyBox.MouseClick += OnSearchResultClick;
-            _historyBox.DoubleClick += delegate { SelectWord(Convert.ToString(_historyBox.SelectedItem)); };
-            left.Controls.Add(_historyBox);
 
             Label searchLabel = new Label();
             searchLabel.Text = "搜索";
-            searchLabel.Dock = DockStyle.Top;
-            searchLabel.Height = 24;
-            left.Controls.Add(searchLabel);
+            searchLabel.Dock = DockStyle.Fill;
+            searchLabel.TextAlign = ContentAlignment.MiddleLeft;
+            left.Controls.Add(searchLabel, 0, 0);
 
             _searchBox = new TextBox();
-            _searchBox.Dock = DockStyle.Top;
+            _searchBox.Dock = DockStyle.Fill;
+            _searchBox.Margin = new Padding(0, 0, 0, 4);
             _searchBox.KeyDown += OnSearchKeyDown;
             _searchBox.TextChanged += delegate { UpdateSearchResults(_searchBox.Text.Trim()); };
-            left.Controls.Add(_searchBox);
+            left.Controls.Add(_searchBox, 0, 1);
+
+            Label historyLabel = new Label();
+            historyLabel.Text = "搜索结果";
+            historyLabel.Dock = DockStyle.Fill;
+            historyLabel.TextAlign = ContentAlignment.MiddleLeft;
+            left.Controls.Add(historyLabel, 0, 2);
+
+            _historyBox = new ListBox();
+            _historyBox.Dock = DockStyle.Fill;
+            _historyBox.Margin = new Padding(0, 0, 0, 4);
+            _historyBox.MouseClick += OnSearchResultClick;
+            _historyBox.DoubleClick += delegate { SelectWord(Convert.ToString(_historyBox.SelectedItem)); };
+            left.Controls.Add(_historyBox, 0, 3);
+
+            Label previewLabel = new Label();
+            previewLabel.Text = "释义预览";
+            previewLabel.Dock = DockStyle.Fill;
+            previewLabel.TextAlign = ContentAlignment.MiddleLeft;
+            left.Controls.Add(previewLabel, 0, 4);
 
             _definitionBox = new TextBox();
             _definitionBox.Dock = DockStyle.Fill;
+            _definitionBox.Margin = new Padding(0);
             _definitionBox.Multiline = true;
             _definitionBox.ScrollBars = ScrollBars.Vertical;
             _definitionBox.ReadOnly = true;
-            left.Controls.Add(_definitionBox);
-            _definitionBox.BringToFront();
+            left.Controls.Add(_definitionBox, 0, 5);
 
-            Panel right = new Panel();
+            TableLayoutPanel right = new TableLayoutPanel();
             right.Dock = DockStyle.Fill;
+            right.Margin = new Padding(0);
+            right.ColumnCount = 1;
+            right.RowCount = 2;
+            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 92F));
+            right.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.Panel2.Controls.Add(right);
 
             _miniMap = new MiniMapPanel();
-            _miniMap.Dock = DockStyle.Top;
-            _miniMap.Height = 92;
+            _miniMap.Dock = DockStyle.Fill;
+            _miniMap.Margin = new Padding(0);
             _miniMap.Cards = _cards;
             _miniMap.Notes = _notes;
             _miniMap.Arrows = _arrows;
             _miniMap.BackColor = Color.White;
             _miniMap.MouseDown += OnMiniMapMouseDown;
-            right.Controls.Add(_miniMap);
+            right.Controls.Add(_miniMap, 0, 0);
 
             _map = new MapPanel();
             _map.Dock = DockStyle.Fill;
+            _map.Margin = new Padding(0);
             _map.AutoScroll = true;
             _map.BackColor = Color.White;
             _map.Cards = _cards;
@@ -169,8 +205,7 @@ namespace PandanciClone
             _map.MouseDoubleClick += OnMapMouseDoubleClick;
             _map.Scroll += delegate { RefreshMapViews(true); };
             _map.Resize += delegate { ClampLeftPanelWidth(); UpdateCanvasSize(); RefreshMapViews(true); };
-            right.Controls.Add(_map);
-            _miniMap.BringToFront();
+            right.Controls.Add(_map, 0, 1);
             Shown += delegate { ClampLeftPanelWidth(); };
         }
 
@@ -274,6 +309,12 @@ namespace PandanciClone
                 SaveCurrentFile();
                 return true;
             }
+            if (keyData == (Keys.Control | Keys.X))
+            {
+                if (_selectedCard == null) return base.ProcessCmdKey(ref msg, keyData);
+                StoreCard(_selectedCard);
+                return true;
+            }
             if (keyData == (Keys.Control | Keys.L))
             {
                 StartOrFinishLink();
@@ -285,6 +326,19 @@ namespace PandanciClone
                 return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            try
+            {
+                SaveCurrentFile();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("自动保存失败：" + ex.Message, "自动保存", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            base.OnFormClosing(e);
         }
 
         private void WriteCurrentFileToConfig(string path)
@@ -321,11 +375,25 @@ namespace PandanciClone
             _map.Capture = true;
             SelectItem(card, note);
             _dragCard = card;
-            _dragNote = note;
+            _dragNote = null;
+            _resizeNote = null;
             _dragStartMouse = p;
             _dragMoved = false;
             if (card != null) _dragStartLocation = new Point(card.X, card.Y);
-            if (note != null) _dragStartLocation = new Point(note.X, note.Y);
+            if (note != null)
+            {
+                if (HitNoteResizeHandle(note, p))
+                {
+                    _resizeNote = note;
+                    _resizeStartSize = new Size(note.Width, note.Height);
+                    _map.Cursor = Cursors.SizeNWSE;
+                }
+                else
+                {
+                    _dragNote = note;
+                    _dragStartLocation = new Point(note.X, note.Y);
+                }
+            }
             if (card == null && note == null)
             {
                 _panning = true;
@@ -337,9 +405,33 @@ namespace PandanciClone
 
         private void OnMapMouseMove(object sender, MouseEventArgs e)
         {
-            if ((_dragCard != null || _dragNote != null) && e.Button == MouseButtons.Left)
+            if (e.Button == MouseButtons.None)
+            {
+                Point hoverPoint = PointToMap(e.Location);
+                TextNote hoverNote = HitNote(hoverPoint);
+                _map.Cursor = hoverNote != null && HitNoteResizeHandle(hoverNote, hoverPoint) ? Cursors.SizeNWSE : Cursors.Default;
+            }
+
+            if ((_dragCard != null || _dragNote != null || _resizeNote != null) && e.Button == MouseButtons.Left)
             {
                 AutoScrollWhileDragging(e.Location);
+            }
+
+            if (_resizeNote != null && e.Button == MouseButtons.Left)
+            {
+                Point resizePoint = PointToMap(e.Location);
+                int resizeDx = resizePoint.X - _dragStartMouse.X;
+                int resizeDy = resizePoint.Y - _dragStartMouse.Y;
+                if (Math.Abs(resizeDx) + Math.Abs(resizeDy) > 2) _dragMoved = true;
+
+                Rectangle resizeOldBounds = new Rectangle(_resizeNote.X, _resizeNote.Y, _resizeNote.Width, _resizeNote.Height);
+                _resizeNote.Width = Math.Max(60, _resizeStartSize.Width + resizeDx);
+                _resizeNote.Height = Math.Max(30, _resizeStartSize.Height + resizeDy);
+                Rectangle resizeNewBounds = new Rectangle(_resizeNote.X, _resizeNote.Y, _resizeNote.Width, _resizeNote.Height);
+                resizeOldBounds.Inflate(12, 12);
+                resizeNewBounds.Inflate(12, 12);
+                _map.Invalidate(ToClientRect(Rectangle.Union(resizeOldBounds, resizeNewBounds)));
+                return;
             }
 
             if (_panning && e.Button == MouseButtons.Left)
@@ -378,7 +470,6 @@ namespace PandanciClone
 
         private void OnMapMouseUp(object sender, MouseEventArgs e)
         {
-            WordCard clickedCard = _dragCard;
             if (_panning)
             {
                 _panning = false;
@@ -387,6 +478,8 @@ namespace PandanciClone
             }
             _dragCard = null;
             _dragNote = null;
+            _resizeNote = null;
+            _map.Cursor = Cursors.Default;
             _map.Capture = false;
             if (_dragMoved)
             {
@@ -394,6 +487,13 @@ namespace PandanciClone
                 UpdateCanvasSize();
                 RefreshMapViews();
             }
+        }
+
+        private bool HitNoteResizeHandle(TextNote note, Point p)
+        {
+            if (note == null) return false;
+            Rectangle handle = new Rectangle(note.X + note.Width - 12, note.Y + note.Height - 12, 12, 12);
+            return handle.Contains(p);
         }
 
         private void OnMapMouseDoubleClick(object sender, MouseEventArgs e)
@@ -416,13 +516,13 @@ namespace PandanciClone
             ContextMenuStrip menu = new ContextMenuStrip();
             if (card != null)
             {
-                menu.Items.Add("复习", null, delegate { SelectItem(card, null); MarkSelected(true); });
+                menu.Items.Add("复习", null, delegate { SelectItem(card, null); ReviewSelected(); });
                 menu.Items.Add("查词", null, delegate { SelectItem(card, null); LookupSelected(); });
                 menu.Items.Add("存储单词", null, delegate { StoreCard(card); });
                 menu.Items.Add("从此单词开始关联", null, delegate { _linkStartCard = card; SelectItem(card, null); });
                 menu.Items.Add("关联到此单词", null, delegate { LinkTo(card); });
                 menu.Items.Add("已记住", null, delegate { SelectItem(card, null); MarkSelected(true); });
-                menu.Items.Add("未记住", null, delegate { SelectItem(card, null); MarkSelected(false); });
+                menu.Items.Add("待学习", null, delegate { SelectItem(card, null); MarkSelected(false); });
                 menu.Items.Add("删除", null, delegate { DeleteCard(card); });
             }
             else if (note != null)
@@ -562,7 +662,39 @@ namespace PandanciClone
         private void MarkSelected(bool remembered)
         {
             if (_selectedCard == null) return;
-            _selectedCard.MarkReviewed(remembered);
+            if (remembered)
+            {
+                _selectedCard.Flag1 = true;
+                _selectedCard.LastReview = DateTime.Now;
+                _selectedCard.NextReview = DateTime.MinValue;
+                _selectedCard.Score = 100;
+            }
+            else
+            {
+                ResetSelectedToPending();
+                return;
+            }
+            UpdateStats();
+            RefreshMapViews();
+        }
+
+        private void ReviewSelected()
+        {
+            if (_selectedCard == null) return;
+            _selectedCard.Flag1 = false;
+            _selectedCard.MarkReviewed(true);
+            UpdateStats();
+            RefreshMapViews();
+        }
+
+        private void ResetSelectedToPending()
+        {
+            if (_selectedCard == null) return;
+            _selectedCard.Flag1 = false;
+            _selectedCard.LastReview = DateTime.MinValue;
+            _selectedCard.NextReview = DateTime.MinValue;
+            _selectedCard.Score = 100;
+            _selectedCard.Level = 3;
             UpdateStats();
             RefreshMapViews();
         }
@@ -570,13 +702,26 @@ namespace PandanciClone
         private void UpdateStats()
         {
             int due = 0;
-            int newWords = 0;
+            int pending = 0;
+            int reviewing = 0;
+            int mastered = 0;
             foreach (WordCard c in _cards)
             {
+                if (c.Flag1)
+                {
+                    mastered++;
+                    continue;
+                }
+                if (c.LastReview == DateTime.MinValue)
+                {
+                    pending++;
+                    continue;
+                }
+                reviewing++;
                 if (c.Due) due++;
-                if (c.LastReview == DateTime.MinValue) newWords++;
             }
-            _statsLabel.Text = "总数: " + _cards.Count + "  到期: " + due + "  未复习: " + newWords + "  其他: " + Math.Max(0, _cards.Count - due - newWords);
+            int active = Math.Max(0, _cards.Count - mastered);
+            _statsLabel.Text = "总数: " + _cards.Count + "  已记住: " + mastered + "  复习中: " + reviewing + "  到期: " + due + "  待学习: " + pending + "  其他: " + Math.Max(0, active - reviewing - pending);
         }
 
         private void SelectNextDue()
@@ -1133,6 +1278,7 @@ namespace PandanciClone
             using (Brush brush = new SolidBrush(Color.LemonChiffon))
             using (Pen pen = new Pen(Color.Goldenrod))
             using (Pen selectedPen = new Pen(Color.OrangeRed, 2F))
+            using (Brush handleBrush = new SolidBrush(Color.OrangeRed))
             using (Brush textBrush = new SolidBrush(Color.Black))
             using (StringFormat format = new StringFormat())
             {
@@ -1147,6 +1293,10 @@ namespace PandanciClone
                     g.DrawRectangle(note == SelectedNote ? selectedPen : pen, r);
                     RectangleF textRect = new RectangleF(note.X + 4, note.Y + 4, Math.Max(1, note.Width - 8), Math.Max(1, note.Height - 8));
                     g.DrawString(note.Text, Font, textBrush, textRect, format);
+                    if (note == SelectedNote)
+                    {
+                        g.FillRectangle(handleBrush, note.X + note.Width - 8, note.Y + note.Height - 8, 7, 7);
+                    }
                 }
             }
         }
@@ -1154,10 +1304,10 @@ namespace PandanciClone
         private void DrawCards(Graphics g, Rectangle view)
         {
             if (Cards == null) return;
-            using (Brush normal = new SolidBrush(Color.WhiteSmoke))
-            using (Brush due = new SolidBrush(Color.MistyRose))
-            using (Brush remembered = new SolidBrush(Color.Honeydew))
-            using (Brush forgot = new SolidBrush(Color.LightYellow))
+            using (Brush normal = new SolidBrush(Color.White))
+            using (Brush due = new SolidBrush(Color.LightYellow))
+            using (Brush reviewing = new SolidBrush(Color.Honeydew))
+            using (Brush mastered = new SolidBrush(Color.Gainsboro))
             using (Brush storedMarker = new SolidBrush(Color.RoyalBlue))
             using (Pen border = new Pen(Color.Gray))
             using (Pen selectedBorder = new Pen(Color.RoyalBlue, 2F))
@@ -1172,7 +1322,7 @@ namespace PandanciClone
                 {
                     Rectangle r = new Rectangle(card.X, card.Y, card.Width, card.Height);
                     if (!r.IntersectsWith(view)) continue;
-                    Brush brush = GetCardBrush(card, normal, due, remembered, forgot);
+                    Brush brush = GetCardBrush(card, normal, due, reviewing, mastered);
                     g.FillRectangle(brush, r);
                     if (StoredCards != null && StoredCards.Contains(card))
                     {
@@ -1184,12 +1334,12 @@ namespace PandanciClone
             }
         }
 
-        private static Brush GetCardBrush(WordCard card, Brush normal, Brush due, Brush remembered, Brush forgot)
+        private static Brush GetCardBrush(WordCard card, Brush normal, Brush due, Brush reviewing, Brush mastered)
         {
+            if (card.Flag1) return mastered;
             if (card.Due) return due;
             if (card.LastReview == DateTime.MinValue) return normal;
-            if (card.Score < 100) return forgot;
-            return remembered;
+            return reviewing;
         }
     }
 
