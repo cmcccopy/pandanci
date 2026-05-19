@@ -14,6 +14,7 @@ namespace PandanciClone
         private readonly List<TextNote> _notes = new List<TextNote>();
         private readonly List<ArrowItem> _arrows = new List<ArrowItem>();
         private readonly List<RawItem> _rawItems = new List<RawItem>();
+        private readonly List<WordCard> _storedCards = new List<WordCard>();
         private readonly DictionaryService _dictionary;
 
         private string _currentFile;
@@ -161,6 +162,7 @@ namespace PandanciClone
             _map.Cards = _cards;
             _map.Notes = _notes;
             _map.Arrows = _arrows;
+            _map.StoredCards = _storedCards;
             _map.MouseDown += OnMapMouseDown;
             _map.MouseMove += OnMapMouseMove;
             _map.MouseUp += OnMapMouseUp;
@@ -202,6 +204,7 @@ namespace PandanciClone
             _rawItems.Clear();
             _selectedCard = null;
             _selectedNote = null;
+            _storedCards.Clear();
             _currentFile = path;
 
             if (!File.Exists(path)) return;
@@ -415,6 +418,7 @@ namespace PandanciClone
             {
                 menu.Items.Add("复习", null, delegate { SelectItem(card, null); MarkSelected(true); });
                 menu.Items.Add("查词", null, delegate { SelectItem(card, null); LookupSelected(); });
+                menu.Items.Add("存储单词", null, delegate { StoreCard(card); });
                 menu.Items.Add("从此单词开始关联", null, delegate { _linkStartCard = card; SelectItem(card, null); });
                 menu.Items.Add("关联到此单词", null, delegate { LinkTo(card); });
                 menu.Items.Add("已记住", null, delegate { SelectItem(card, null); MarkSelected(true); });
@@ -431,8 +435,53 @@ namespace PandanciClone
                 Point p = PointToMap(screenPoint);
                 menu.Items.Add("添加单词", null, delegate { AddWordAt(p); });
                 menu.Items.Add("添加笔记", null, delegate { AddNoteAt(p); });
+                AddReleaseMenu(menu, p);
             }
             menu.Show(_map, screenPoint);
+        }
+
+        private void StoreCard(WordCard card)
+        {
+            if (card == null) return;
+            SelectItem(card, null);
+            if (!_storedCards.Contains(card)) _storedCards.Add(card);
+            RefreshMapViews();
+        }
+
+        private void AddReleaseMenu(ContextMenuStrip menu, Point target)
+        {
+            ToolStripMenuItem release = new ToolStripMenuItem("释放单词");
+            if (_storedCards.Count == 0)
+            {
+                ToolStripMenuItem empty = new ToolStripMenuItem("无已存储单词");
+                empty.Enabled = false;
+                release.DropDownItems.Add(empty);
+            }
+            else
+            {
+                foreach (WordCard stored in _storedCards.ToArray())
+                {
+                    WordCard card = stored;
+                    release.DropDownItems.Add(card.Word, null, delegate { ReleaseCardAt(card, target); });
+                }
+            }
+            menu.Items.Add(release);
+        }
+
+        private void ReleaseCardAt(WordCard card, Point target)
+        {
+            if (card == null || !_cards.Contains(card))
+            {
+                _storedCards.Remove(card);
+                RefreshMapViews();
+                return;
+            }
+
+            MoveCard(card, target.X, target.Y);
+            _storedCards.Remove(card);
+            SelectItem(card, null);
+            UpdateCanvasSize();
+            RefreshMapViews();
         }
 
         private WordCard HitCard(Point p)
@@ -742,6 +791,7 @@ namespace PandanciClone
             int cx = card.X + card.Width / 2;
             int cy = card.Y + card.Height / 2;
             _cards.Remove(card);
+            _storedCards.Remove(card);
             _arrows.RemoveAll(delegate(ArrowItem a) { return (a.X1 == cx && a.Y1 == cy) || (a.X2 == cx && a.Y2 == cy); });
             if (_selectedCard == card) SelectItem(null, null);
             UpdateCanvasSize();
@@ -1012,6 +1062,7 @@ namespace PandanciClone
         public List<WordCard> Cards;
         public List<TextNote> Notes;
         public List<ArrowItem> Arrows;
+        public List<WordCard> StoredCards;
         public WordCard SelectedCard;
         public TextNote SelectedNote;
         public Point OriginOffset { get; set; }
@@ -1107,6 +1158,7 @@ namespace PandanciClone
             using (Brush due = new SolidBrush(Color.MistyRose))
             using (Brush remembered = new SolidBrush(Color.Honeydew))
             using (Brush forgot = new SolidBrush(Color.LightYellow))
+            using (Brush storedMarker = new SolidBrush(Color.RoyalBlue))
             using (Pen border = new Pen(Color.Gray))
             using (Pen selectedBorder = new Pen(Color.RoyalBlue, 2F))
             using (Brush textBrush = new SolidBrush(Color.Black))
@@ -1122,6 +1174,10 @@ namespace PandanciClone
                     if (!r.IntersectsWith(view)) continue;
                     Brush brush = GetCardBrush(card, normal, due, remembered, forgot);
                     g.FillRectangle(brush, r);
+                    if (StoredCards != null && StoredCards.Contains(card))
+                    {
+                        g.FillRectangle(storedMarker, r.X + 1, r.Y + 1, r.Width - 1, 4);
+                    }
                     g.DrawRectangle(card == SelectedCard ? selectedBorder : border, r);
                     g.DrawString(card.Word, Font, textBrush, new RectangleF(r.X, r.Y + 1, r.Width, r.Height), format);
                 }
