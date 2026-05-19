@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -356,8 +356,8 @@ namespace PandanciClone
             int dy = p.Y - _dragStartMouse.Y;
             if (Math.Abs(dx) + Math.Abs(dy) > 2) _dragMoved = true;
 
-            int x = Math.Max(0, _dragStartLocation.X + dx);
-            int y = Math.Max(0, _dragStartLocation.Y + dy);
+            int x = _dragStartLocation.X + dx;
+            int y = _dragStartLocation.Y + dy;
 
             Rectangle oldBounds = GetDraggedBounds();
             if (_dragCard != null) MoveCard(_dragCard, x, y);
@@ -455,7 +455,7 @@ namespace PandanciClone
         private Rectangle ToClientRect(Rectangle mapRect)
         {
             Point offset = _map.AutoScrollPosition;
-            return new Rectangle(mapRect.X + offset.X, mapRect.Y + offset.Y, mapRect.Width, mapRect.Height);
+            return new Rectangle(mapRect.X + offset.X + _map.OriginOffset.X, mapRect.Y + offset.Y + _map.OriginOffset.Y, mapRect.Width, mapRect.Height);
         }
 
         private TextNote HitNote(Point p)
@@ -636,8 +636,8 @@ namespace PandanciClone
             if (string.IsNullOrWhiteSpace(word)) return;
             WordCard c = new WordCard();
             c.Word = word.Trim();
-            c.X = Math.Max(0, p.X);
-            c.Y = Math.Max(0, p.Y);
+            c.X = p.X;
+            c.Y = p.Y;
             c.Width = Math.Max(50, TextRenderer.MeasureText(c.Word, Font).Width + 20);
             c.Height = 28;
             _cards.Add(c);
@@ -652,8 +652,8 @@ namespace PandanciClone
             string text = Prompt.Show("笔记", "添加笔记");
             if (text == null) return;
             TextNote note = new TextNote();
-            note.X = Math.Max(0, p.X);
-            note.Y = Math.Max(0, p.Y);
+            note.X = p.X;
+            note.Y = p.Y;
             note.Width = 190;
             note.Height = 60;
             note.Text = string.IsNullOrWhiteSpace(text) ? "笔记" : text;
@@ -775,7 +775,7 @@ namespace PandanciClone
 
         private Point PointToMap(Point clientPoint)
         {
-            return new Point(clientPoint.X - _map.AutoScrollPosition.X, clientPoint.Y - _map.AutoScrollPosition.Y);
+            return new Point(clientPoint.X - _map.AutoScrollPosition.X - _map.OriginOffset.X, clientPoint.Y - _map.AutoScrollPosition.Y - _map.OriginOffset.Y);
         }
 
         private void AutoScrollWhileDragging(Point clientPoint)
@@ -800,15 +800,15 @@ namespace PandanciClone
 
         private void ScrollTo(int x, int y)
         {
-            int targetX = Math.Max(0, x - _map.ClientSize.Width / 2);
-            int targetY = Math.Max(0, y - _map.ClientSize.Height / 2);
+            int targetX = Math.Max(0, x + _map.OriginOffset.X - _map.ClientSize.Width / 2);
+            int targetY = Math.Max(0, y + _map.OriginOffset.Y - _map.ClientSize.Height / 2);
             _map.AutoScrollPosition = new Point(targetX, targetY);
             RefreshMapViews(true);
         }
 
         private void ScrollToMapPoint(int x, int y)
         {
-            _map.AutoScrollPosition = new Point(Math.Max(0, x - _map.ClientSize.Width / 2), Math.Max(0, y - _map.ClientSize.Height / 2));
+            _map.AutoScrollPosition = new Point(Math.Max(0, x + _map.OriginOffset.X - _map.ClientSize.Width / 2), Math.Max(0, y + _map.OriginOffset.Y - _map.ClientSize.Height / 2));
             RefreshMapViews(true);
         }
 
@@ -822,35 +822,51 @@ namespace PandanciClone
             if (_map != null) _map.Invalidate();
             if (updateMiniMap && _miniMap != null && _map != null)
             {
-                _miniMap.Viewport = new Rectangle(-_map.AutoScrollPosition.X, -_map.AutoScrollPosition.Y, _map.ClientSize.Width, _map.ClientSize.Height);
+                _miniMap.Viewport = new Rectangle(-_map.AutoScrollPosition.X - _map.OriginOffset.X, -_map.AutoScrollPosition.Y - _map.OriginOffset.Y, _map.ClientSize.Width, _map.ClientSize.Height);
                 _miniMap.Invalidate();
             }
         }
 
         private void UpdateCanvasSize()
         {
+            const int margin = 160;
+            int minX = 0;
+            int minY = 0;
             int maxX = _map.ClientSize.Width;
             int maxY = _map.ClientSize.Height;
+
             foreach (WordCard c in _cards)
             {
-                maxX = Math.Max(maxX, c.X + c.Width + 200);
-                maxY = Math.Max(maxY, c.Y + c.Height + 200);
+                minX = Math.Min(minX, c.X);
+                minY = Math.Min(minY, c.Y);
+                maxX = Math.Max(maxX, c.X + c.Width);
+                maxY = Math.Max(maxY, c.Y + c.Height);
             }
             foreach (TextNote n in _notes)
             {
-                maxX = Math.Max(maxX, n.X + n.Width + 200);
-                maxY = Math.Max(maxY, n.Y + n.Height + 200);
+                minX = Math.Min(minX, n.X);
+                minY = Math.Min(minY, n.Y);
+                maxX = Math.Max(maxX, n.X + n.Width);
+                maxY = Math.Max(maxY, n.Y + n.Height);
             }
             foreach (ArrowItem a in _arrows)
             {
-                maxX = Math.Max(maxX, Math.Max(a.X1, a.X2) + 200);
-                maxY = Math.Max(maxY, Math.Max(a.Y1, a.Y2) + 200);
+                minX = Math.Min(minX, Math.Min(a.X1, a.X2));
+                minY = Math.Min(minY, Math.Min(a.Y1, a.Y2));
+                maxX = Math.Max(maxX, Math.Max(a.X1, a.X2));
+                maxY = Math.Max(maxY, Math.Max(a.Y1, a.Y2));
             }
-            _map.AutoScrollMinSize = new Size(maxX, maxY);
+
+            Rectangle bounds = Rectangle.FromLTRB(minX - margin, minY - margin, maxX + margin, maxY + margin);
+            _map.MapBounds = bounds;
+            _map.OriginOffset = new Point(-bounds.Left, -bounds.Top);
+            _map.AutoScrollMinSize = new Size(Math.Max(_map.ClientSize.Width, bounds.Width), Math.Max(_map.ClientSize.Height, bounds.Height));
+
             if (_miniMap != null)
             {
-                _miniMap.MapSize = new Size(maxX, maxY);
-                _miniMap.Viewport = new Rectangle(-_map.AutoScrollPosition.X, -_map.AutoScrollPosition.Y, _map.ClientSize.Width, _map.ClientSize.Height);
+                _miniMap.MapBounds = bounds;
+                _miniMap.MapSize = bounds.Size;
+                _miniMap.Viewport = new Rectangle(-_map.AutoScrollPosition.X - _map.OriginOffset.X, -_map.AutoScrollPosition.Y - _map.OriginOffset.Y, _map.ClientSize.Width, _map.ClientSize.Height);
                 _miniMap.RebuildCache();
             }
         }
@@ -883,10 +899,12 @@ namespace PandanciClone
         public List<TextNote> Notes;
         public List<ArrowItem> Arrows;
         public Size MapSize = new Size(1, 1);
+        public Rectangle MapBounds = Rectangle.Empty;
         public Rectangle Viewport;
         private Bitmap _cache;
         private Size _cacheSize;
         private Size _cacheMapSize;
+        private Rectangle _cacheMapBounds;
 
         public MiniMapPanel()
         {
@@ -899,9 +917,9 @@ namespace PandanciClone
             Rectangle area = GetMiniArea();
             if (area.Width <= 0 || area.Height <= 0) return Point.Empty;
             float scale = GetScale(area);
-            int x = (int)((p.X - area.X) / scale);
-            int y = (int)((p.Y - area.Y) / scale);
-            return new Point(Math.Max(0, x), Math.Max(0, y));
+            int x = MapBounds.Left + (int)((p.X - area.X) / scale);
+            int y = MapBounds.Top + (int)((p.Y - area.Y) / scale);
+            return new Point(x, y);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -917,7 +935,7 @@ namespace PandanciClone
 
             using (Pen viewPen = new Pen(Color.Red, 2F))
             {
-                RectangleF view = new RectangleF(area.X + Viewport.X * scale, area.Y + Viewport.Y * scale, Viewport.Width * scale, Viewport.Height * scale);
+                RectangleF view = new RectangleF(area.X + (Viewport.X - MapBounds.Left) * scale, area.Y + (Viewport.Y - MapBounds.Top) * scale, Viewport.Width * scale, Viewport.Height * scale);
                 e.Graphics.DrawRectangle(viewPen, view.X, view.Y, view.Width, view.Height);
             }
 
@@ -939,11 +957,12 @@ namespace PandanciClone
 
         private void EnsureCache(Size areaSize, float scale)
         {
-            if (_cache != null && _cacheSize == areaSize && _cacheMapSize == MapSize) return;
+            if (_cache != null && _cacheSize == areaSize && _cacheMapSize == MapSize && _cacheMapBounds == MapBounds) return;
             if (_cache != null) _cache.Dispose();
 
             _cacheSize = areaSize;
             _cacheMapSize = MapSize;
+            _cacheMapBounds = MapBounds;
             _cache = new Bitmap(Math.Max(1, areaSize.Width), Math.Max(1, areaSize.Height));
             using (Graphics g = Graphics.FromImage(_cache))
             using (Brush background = new SolidBrush(Color.White))
@@ -954,6 +973,7 @@ namespace PandanciClone
             {
                 g.FillRectangle(background, 0, 0, areaSize.Width, areaSize.Height);
                 g.ScaleTransform(scale, scale);
+                g.TranslateTransform(-MapBounds.Left, -MapBounds.Top);
                 if (Arrows != null)
                 {
                     foreach (ArrowItem a in Arrows) g.DrawLine(arrowPen, a.X1, a.Y1, a.X2, a.Y2);
@@ -994,6 +1014,8 @@ namespace PandanciClone
         public List<ArrowItem> Arrows;
         public WordCard SelectedCard;
         public TextNote SelectedNote;
+        public Point OriginOffset { get; set; }
+        public Rectangle MapBounds = Rectangle.Empty;
 
         public MapPanel()
         {
@@ -1017,8 +1039,8 @@ namespace PandanciClone
         {
             base.OnPaint(e);
             Point offset = AutoScrollPosition;
-            e.Graphics.TranslateTransform(offset.X, offset.Y);
-            Rectangle view = new Rectangle(-offset.X, -offset.Y, ClientSize.Width, ClientSize.Height);
+            e.Graphics.TranslateTransform(offset.X + OriginOffset.X, offset.Y + OriginOffset.Y);
+            Rectangle view = new Rectangle(-offset.X - OriginOffset.X, -offset.Y - OriginOffset.Y, ClientSize.Width, ClientSize.Height);
 
             DrawGrid(e.Graphics, view);
             DrawArrows(e.Graphics, view);
@@ -1156,3 +1178,12 @@ namespace PandanciClone
         }
     }
 }
+
+
+
+
+
+
+
+
+
