@@ -1,6 +1,6 @@
 # PandanciClone
 
-一个用 C# WinForms 写的本地单词图工具，兼容当前目录里的 `wordmap.wordmap`、`dict.db`、`Dictionary.db` 和 `user-dict.txt`。
+一个用 C# WinForms 写的本地单词图工具，自己复现pandanci软件，兼容当前目录里的 `wordmap.wordmap`、`dict.db`、`Dictionary.db` 和 `user-dict.txt`。
 
 ## 构建
 
