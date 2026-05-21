@@ -34,6 +34,7 @@ namespace PandanciClone
         private TextNote _resizeNote;
         private Point _dragStartMouse;
         private Point _dragStartLocation;
+        private Point _lastMapMousePoint;
         private Size _resizeStartSize;
         private bool _dragMoved;
         private bool _panning;
@@ -84,7 +85,7 @@ namespace PandanciClone
             menu.Items.Add(file);
             menu.Items.Add(new ToolStripMenuItem("帮助", null, delegate
             {
-                MessageBox.Show("右键画布可添加单词或笔记；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布；选中笔记后拖右下角可调整大小。\r\nCtrl+X：存储当前选中单词。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
+                MessageBox.Show("右键画布可添加单词或笔记；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布；选中笔记后拖右下角可调整大小。\r\nCtrl+X：存储当前选中单词。\r\nCtrl+V：释放最后存储的单词到鼠标当前位置。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
             }));
             mainLayout.Controls.Add(menu, 0, 0);
             MainMenuStrip = menu;
@@ -315,6 +316,12 @@ namespace PandanciClone
                 StoreCard(_selectedCard);
                 return true;
             }
+            if (keyData == (Keys.Control | Keys.V))
+            {
+                if (_storedCards.Count == 0) return base.ProcessCmdKey(ref msg, keyData);
+                ReleaseCardAt(_storedCards[_storedCards.Count - 1], _lastMapMousePoint);
+                return true;
+            }
             if (keyData == (Keys.Control | Keys.L))
             {
                 StartOrFinishLink();
@@ -361,6 +368,7 @@ namespace PandanciClone
         private void OnMapMouseDown(object sender, MouseEventArgs e)
         {
             Point p = PointToMap(e.Location);
+            _lastMapMousePoint = p;
             WordCard card = HitCard(p);
             TextNote note = card == null ? HitNote(p) : null;
 
@@ -405,9 +413,11 @@ namespace PandanciClone
 
         private void OnMapMouseMove(object sender, MouseEventArgs e)
         {
+            _lastMapMousePoint = PointToMap(e.Location);
+
             if (e.Button == MouseButtons.None)
             {
-                Point hoverPoint = PointToMap(e.Location);
+                Point hoverPoint = _lastMapMousePoint;
                 TextNote hoverNote = HitNote(hoverPoint);
                 _map.Cursor = hoverNote != null && HitNoteResizeHandle(hoverNote, hoverPoint) ? Cursors.SizeNWSE : Cursors.Default;
             }
@@ -681,7 +691,15 @@ namespace PandanciClone
         private void ReviewSelected()
         {
             if (_selectedCard == null) return;
+            bool restart = _selectedCard.Flag1;
             _selectedCard.Flag1 = false;
+            if (restart)
+            {
+                _selectedCard.LastReview = DateTime.MinValue;
+                _selectedCard.NextReview = DateTime.MinValue;
+                _selectedCard.Level = 0;
+                _selectedCard.Score = 100;
+            }
             _selectedCard.MarkReviewed(true);
             UpdateStats();
             RefreshMapViews();

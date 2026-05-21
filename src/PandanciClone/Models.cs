@@ -66,7 +66,7 @@ namespace PandanciClone
             LastReview = DateTime.Now;
             if (remembered)
             {
-                Level = firstReview ? 1 : Math.Min(8, Level + 1);
+                Level = firstReview ? 0 : Math.Min(11, Math.Max(0, Level) + 1);
                 Score = 100;
             }
             else
@@ -75,7 +75,7 @@ namespace PandanciClone
                 Score = Math.Max(0, Score - 20);
             }
 
-            double[] hours = new double[] { 3, 3, 8, 24, 48, 96, 168, 336, 720 };
+            double[] hours = new double[] { 0.33, 1, 8, 24, 48, 96, 168, 360, 720, 1440, 2880, 4320 };
             int index = Math.Max(0, Math.Min(Level, hours.Length - 1));
             NextReview = DateTime.Now.AddHours(hours[index]);
         }
