@@ -15,6 +15,10 @@ namespace PandanciClone
         private readonly List<ArrowItem> _arrows = new List<ArrowItem>();
         private readonly List<RawItem> _rawItems = new List<RawItem>();
         private readonly List<WordCard> _storedCards = new List<WordCard>();
+        private readonly List<WordCard> _selectedCards = new List<WordCard>();
+        private readonly List<TextNote> _selectedNotes = new List<TextNote>();
+        private readonly Dictionary<WordCard, Point> _groupCardStarts = new Dictionary<WordCard, Point>();
+        private readonly Dictionary<TextNote, Point> _groupNoteStarts = new Dictionary<TextNote, Point>();
         private readonly DictionaryService _dictionary;
 
         private string _currentFile;
@@ -35,9 +39,13 @@ namespace PandanciClone
         private Point _dragStartMouse;
         private Point _dragStartLocation;
         private Point _lastMapMousePoint;
+        private Point _selectionStart;
+        private Rectangle _selectionRect;
         private Size _resizeStartSize;
         private bool _dragMoved;
         private bool _panning;
+        private bool _boxSelecting;
+        private bool _groupDragging;
         private Point _panStartClient;
         private Point _panStartScroll;
 
@@ -200,6 +208,8 @@ namespace PandanciClone
             _map.Notes = _notes;
             _map.Arrows = _arrows;
             _map.StoredCards = _storedCards;
+            _map.MultiSelectedCards = _selectedCards;
+            _map.MultiSelectedNotes = _selectedNotes;
             _map.MouseDown += OnMapMouseDown;
             _map.MouseMove += OnMapMouseMove;
             _map.MouseUp += OnMapMouseUp;
@@ -241,6 +251,7 @@ namespace PandanciClone
             _selectedCard = null;
             _selectedNote = null;
             _storedCards.Clear();
+            ClearMultiSelection();
             _currentFile = path;
 
             if (!File.Exists(path)) return;
@@ -381,12 +392,37 @@ namespace PandanciClone
 
             if (e.Button != MouseButtons.Left) return;
             _map.Capture = true;
+            _dragStartMouse = p;
+            _dragMoved = false;
+
+            if ((ModifierKeys & Keys.Control) == Keys.Control)
+            {
+                _boxSelecting = true;
+                _selectionStart = p;
+                _selectionRect = Rectangle.Empty;
+                ClearMultiSelection();
+                _map.ShowSelectionBox = true;
+                _map.SelectionBox = _selectionRect;
+                _map.Cursor = Cursors.Cross;
+                RefreshMapViews();
+                return;
+            }
+
+            if (IsMultiSelected(card, note))
+            {
+                _groupDragging = true;
+                _groupCardStarts.Clear();
+                _groupNoteStarts.Clear();
+                foreach (WordCard selected in _selectedCards) _groupCardStarts[selected] = new Point(selected.X, selected.Y);
+                foreach (TextNote selected in _selectedNotes) _groupNoteStarts[selected] = new Point(selected.X, selected.Y);
+                _map.Cursor = Cursors.SizeAll;
+                return;
+            }
+
             SelectItem(card, note);
             _dragCard = card;
             _dragNote = null;
             _resizeNote = null;
-            _dragStartMouse = p;
-            _dragMoved = false;
             if (card != null) _dragStartLocation = new Point(card.X, card.Y);
             if (note != null)
             {
@@ -425,6 +461,35 @@ namespace PandanciClone
             if ((_dragCard != null || _dragNote != null || _resizeNote != null) && e.Button == MouseButtons.Left)
             {
                 AutoScrollWhileDragging(e.Location);
+            }
+
+            if (_boxSelecting && e.Button == MouseButtons.Left)
+            {
+                _selectionRect = NormalizeRect(_selectionStart, _lastMapMousePoint);
+                _map.SelectionBox = _selectionRect;
+                _map.ShowSelectionBox = true;
+                RefreshMapViews(false);
+                return;
+            }
+
+            if (_groupDragging && e.Button == MouseButtons.Left)
+            {
+                AutoScrollWhileDragging(e.Location);
+                int groupDx = _lastMapMousePoint.X - _dragStartMouse.X;
+                int groupDy = _lastMapMousePoint.Y - _dragStartMouse.Y;
+                if (Math.Abs(groupDx) + Math.Abs(groupDy) > 2) _dragMoved = true;
+
+                foreach (KeyValuePair<WordCard, Point> item in _groupCardStarts)
+                {
+                    MoveCard(item.Key, item.Value.X + groupDx, item.Value.Y + groupDy);
+                }
+                foreach (KeyValuePair<TextNote, Point> item in _groupNoteStarts)
+                {
+                    item.Key.X = item.Value.X + groupDx;
+                    item.Key.Y = item.Value.Y + groupDy;
+                }
+                RefreshMapViews(false);
+                return;
             }
 
             if (_resizeNote != null && e.Button == MouseButtons.Left)
@@ -480,6 +545,17 @@ namespace PandanciClone
 
         private void OnMapMouseUp(object sender, MouseEventArgs e)
         {
+            if (_boxSelecting)
+            {
+                _boxSelecting = false;
+                _map.ShowSelectionBox = false;
+                SelectItemsInRect(_selectionRect);
+                _map.Cursor = Cursors.Default;
+                _map.Capture = false;
+                RefreshMapViews();
+                return;
+            }
+
             if (_panning)
             {
                 _panning = false;
@@ -489,6 +565,9 @@ namespace PandanciClone
             _dragCard = null;
             _dragNote = null;
             _resizeNote = null;
+            _groupDragging = false;
+            _groupCardStarts.Clear();
+            _groupNoteStarts.Clear();
             _map.Cursor = Cursors.Default;
             _map.Capture = false;
             if (_dragMoved)
@@ -497,6 +576,41 @@ namespace PandanciClone
                 UpdateCanvasSize();
                 RefreshMapViews();
             }
+        }
+
+        private static Rectangle NormalizeRect(Point a, Point b)
+        {
+            return Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X), Math.Max(a.Y, b.Y));
+        }
+
+        private bool IsMultiSelected(WordCard card, TextNote note)
+        {
+            if (_selectedCards.Count + _selectedNotes.Count <= 1) return false;
+            if (card != null && _selectedCards.Contains(card)) return true;
+            if (note != null && _selectedNotes.Contains(note)) return true;
+            return false;
+        }
+
+        private void SelectItemsInRect(Rectangle rect)
+        {
+            ClearMultiSelection();
+            if (rect.Width < 3 || rect.Height < 3) return;
+
+            foreach (WordCard card in _cards)
+            {
+                Rectangle bounds = new Rectangle(card.X, card.Y, card.Width, card.Height);
+                if (rect.IntersectsWith(bounds)) _selectedCards.Add(card);
+            }
+            foreach (TextNote note in _notes)
+            {
+                Rectangle bounds = new Rectangle(note.X, note.Y, note.Width, note.Height);
+                if (rect.IntersectsWith(bounds)) _selectedNotes.Add(note);
+            }
+
+            _selectedCard = _selectedCards.Count > 0 ? _selectedCards[0] : null;
+            _selectedNote = _selectedCard == null && _selectedNotes.Count > 0 ? _selectedNotes[0] : null;
+            _map.SelectedCard = _selectedCard;
+            _map.SelectedNote = _selectedNote;
         }
 
         private bool HitNoteResizeHandle(TextNote note, Point p)
@@ -538,7 +652,7 @@ namespace PandanciClone
             else if (note != null)
             {
                 menu.Items.Add("编辑笔记", null, delegate { EditNote(note); });
-                menu.Items.Add("删除笔记", null, delegate { _notes.Remove(note); _selectedNote = null; UpdateCanvasSize(); RefreshMapViews(); });
+                menu.Items.Add("删除笔记", null, delegate { _notes.Remove(note); _selectedNotes.Remove(note); _selectedNote = null; UpdateCanvasSize(); RefreshMapViews(); });
             }
             else
             {
@@ -629,11 +743,23 @@ namespace PandanciClone
 
         private void SelectItem(WordCard card, TextNote note)
         {
+            ClearMultiSelection();
             _selectedCard = card;
             _selectedNote = note;
             _map.SelectedCard = card;
             _map.SelectedNote = note;
             RefreshMapViews();
+        }
+
+        private void ClearMultiSelection()
+        {
+            _selectedCards.Clear();
+            _selectedNotes.Clear();
+            if (_map != null)
+            {
+                _map.ShowSelectionBox = false;
+                _map.SelectionBox = Rectangle.Empty;
+            }
         }
 
         private void LookupSelected()
@@ -955,6 +1081,7 @@ namespace PandanciClone
             int cy = card.Y + card.Height / 2;
             _cards.Remove(card);
             _storedCards.Remove(card);
+            _selectedCards.Remove(card);
             _arrows.RemoveAll(delegate(ArrowItem a) { return (a.X1 == cx && a.Y1 == cy) || (a.X2 == cx && a.Y2 == cy); });
             if (_selectedCard == card) SelectItem(null, null);
             UpdateCanvasSize();
@@ -1226,10 +1353,14 @@ namespace PandanciClone
         public List<TextNote> Notes;
         public List<ArrowItem> Arrows;
         public List<WordCard> StoredCards;
+        public List<WordCard> MultiSelectedCards;
+        public List<TextNote> MultiSelectedNotes;
         public WordCard SelectedCard;
         public TextNote SelectedNote;
         public Point OriginOffset { get; set; }
         public Rectangle MapBounds = Rectangle.Empty;
+        public Rectangle SelectionBox = Rectangle.Empty;
+        public bool ShowSelectionBox;
 
         public MapPanel()
         {
@@ -1260,6 +1391,7 @@ namespace PandanciClone
             DrawArrows(e.Graphics, view);
             DrawNotes(e.Graphics, view);
             DrawCards(e.Graphics, view);
+            DrawSelectionBox(e.Graphics);
             e.Graphics.ResetTransform();
         }
 
@@ -1290,6 +1422,18 @@ namespace PandanciClone
             g.SmoothingMode = oldMode;
         }
 
+        private void DrawSelectionBox(Graphics g)
+        {
+            if (!ShowSelectionBox || SelectionBox.Width <= 0 || SelectionBox.Height <= 0) return;
+            using (Brush fill = new SolidBrush(Color.FromArgb(35, Color.RoyalBlue)))
+            using (Pen pen = new Pen(Color.RoyalBlue))
+            {
+                pen.DashStyle = DashStyle.Dash;
+                g.FillRectangle(fill, SelectionBox);
+                g.DrawRectangle(pen, SelectionBox);
+            }
+        }
+
         private void DrawNotes(Graphics g, Rectangle view)
         {
             if (Notes == null) return;
@@ -1308,10 +1452,11 @@ namespace PandanciClone
                     Rectangle r = new Rectangle(note.X, note.Y, note.Width, note.Height);
                     if (!r.IntersectsWith(view)) continue;
                     g.FillRectangle(brush, r);
-                    g.DrawRectangle(note == SelectedNote ? selectedPen : pen, r);
+                    bool selected = note == SelectedNote || (MultiSelectedNotes != null && MultiSelectedNotes.Contains(note));
+                    g.DrawRectangle(selected ? selectedPen : pen, r);
                     RectangleF textRect = new RectangleF(note.X + 4, note.Y + 4, Math.Max(1, note.Width - 8), Math.Max(1, note.Height - 8));
                     g.DrawString(note.Text, Font, textBrush, textRect, format);
-                    if (note == SelectedNote)
+                    if (selected)
                     {
                         g.FillRectangle(handleBrush, note.X + note.Width - 8, note.Y + note.Height - 8, 7, 7);
                     }
@@ -1346,7 +1491,8 @@ namespace PandanciClone
                     {
                         g.FillRectangle(storedMarker, r.X + 1, r.Y + 1, r.Width - 1, 4);
                     }
-                    g.DrawRectangle(card == SelectedCard ? selectedBorder : border, r);
+                    bool selected = card == SelectedCard || (MultiSelectedCards != null && MultiSelectedCards.Contains(card));
+                    g.DrawRectangle(selected ? selectedBorder : border, r);
                     g.DrawString(card.Word, Font, textBrush, new RectangleF(r.X, r.Y + 1, r.Width, r.Height), format);
                 }
             }
