@@ -2,7 +2,9 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 
@@ -12,9 +14,12 @@ namespace PandanciClone
     {
         private readonly List<WordCard> _cards = new List<WordCard>();
         private readonly List<TextNote> _notes = new List<TextNote>();
+        private readonly List<ImageItem> _images = new List<ImageItem>();
         private readonly List<ArrowItem> _arrows = new List<ArrowItem>();
         private readonly List<RawItem> _rawItems = new List<RawItem>();
         private readonly List<WordCard> _storedCards = new List<WordCard>();
+        private readonly List<ImageItem> _storedImages = new List<ImageItem>();
+        private readonly List<object> _storedItems = new List<object>();
         private readonly List<WordCard> _selectedCards = new List<WordCard>();
         private readonly List<TextNote> _selectedNotes = new List<TextNote>();
         private readonly Dictionary<WordCard, Point> _groupCardStarts = new Dictionary<WordCard, Point>();
@@ -32,10 +37,13 @@ namespace PandanciClone
 
         private WordCard _selectedCard;
         private TextNote _selectedNote;
+        private ImageItem _selectedImage;
         private WordCard _linkStartCard;
         private WordCard _dragCard;
         private TextNote _dragNote;
+        private ImageItem _dragImage;
         private TextNote _resizeNote;
+        private ImageItem _resizeImage;
         private Point _dragStartMouse;
         private Point _dragStartLocation;
         private Point _lastMapMousePoint;
@@ -93,7 +101,7 @@ namespace PandanciClone
             menu.Items.Add(file);
             menu.Items.Add(new ToolStripMenuItem("帮助", null, delegate
             {
-                MessageBox.Show("右键画布可添加单词或笔记；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布；选中笔记后拖右下角可调整大小。\r\nCtrl+X：存储当前选中单词。\r\nCtrl+V：释放最后存储的单词到鼠标当前位置。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
+                MessageBox.Show("右键画布可添加单词、笔记或图片；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布；选中笔记或图片后拖右下角可调整大小。\r\nAlt+X：存储当前选中的单词或图片。\r\nAlt+V：释放最后存储的内容到鼠标当前位置。\r\nCtrl+V：剪贴板是图片时粘贴图片。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
             }));
             mainLayout.Controls.Add(menu, 0, 0);
             MainMenuStrip = menu;
@@ -194,6 +202,7 @@ namespace PandanciClone
             _miniMap.Margin = new Padding(0);
             _miniMap.Cards = _cards;
             _miniMap.Notes = _notes;
+            _miniMap.Images = _images;
             _miniMap.Arrows = _arrows;
             _miniMap.BackColor = Color.White;
             _miniMap.MouseDown += OnMiniMapMouseDown;
@@ -202,14 +211,18 @@ namespace PandanciClone
             _map = new MapPanel();
             _map.Dock = DockStyle.Fill;
             _map.Margin = new Padding(0);
+            _map.TabStop = true;
             _map.AutoScroll = true;
             _map.BackColor = Color.White;
             _map.Cards = _cards;
             _map.Notes = _notes;
+            _map.Images = _images;
             _map.Arrows = _arrows;
             _map.StoredCards = _storedCards;
+            _map.StoredImages = _storedImages;
             _map.MultiSelectedCards = _selectedCards;
             _map.MultiSelectedNotes = _selectedNotes;
+            _map.PasteFromClipboard = delegate { return TryPasteClipboardImageAt(_lastMapMousePoint); };
             _map.MouseDown += OnMapMouseDown;
             _map.MouseMove += OnMapMouseMove;
             _map.MouseUp += OnMapMouseUp;
@@ -246,11 +259,15 @@ namespace PandanciClone
         {
             _cards.Clear();
             _notes.Clear();
+            _images.Clear();
             _arrows.Clear();
             _rawItems.Clear();
             _selectedCard = null;
             _selectedNote = null;
+            _selectedImage = null;
             _storedCards.Clear();
+            _storedImages.Clear();
+            _storedItems.Clear();
             ClearMultiSelection();
             _currentFile = path;
 
@@ -267,6 +284,11 @@ namespace PandanciClone
                 {
                     TextNote n = TextNote.Parse(line);
                     if (n != null) _notes.Add(n);
+                }
+                else if (line.StartsWith("WLBImage|"))
+                {
+                    ImageItem image = ImageItem.Parse(line);
+                    if (image != null) _images.Add(image);
                 }
                 else if (line.StartsWith("WLBArrow|"))
                 {
@@ -297,6 +319,7 @@ namespace PandanciClone
             List<string> lines = new List<string>();
             foreach (WordCard c in _cards) lines.Add(c.ToLine());
             foreach (TextNote n in _notes) lines.Add(n.ToLine());
+            foreach (ImageItem image in _images) lines.Add(image.ToLine());
             foreach (ArrowItem a in _arrows) lines.Add(a.ToLine());
             foreach (RawItem item in _rawItems) lines.Add(item.Line);
             File.WriteAllLines(path, lines.ToArray(), Encoding.Default);
@@ -321,17 +344,21 @@ namespace PandanciClone
                 SaveCurrentFile();
                 return true;
             }
-            if (keyData == (Keys.Control | Keys.X))
+            if (keyData == (Keys.Alt | Keys.X))
             {
-                if (_selectedCard == null) return base.ProcessCmdKey(ref msg, keyData);
-                StoreCard(_selectedCard);
+                if (StoreSelectedItem()) return true;
+                return base.ProcessCmdKey(ref msg, keyData);
+            }
+            if (keyData == (Keys.Alt | Keys.V))
+            {
+                if (_storedItems.Count == 0) return base.ProcessCmdKey(ref msg, keyData);
+                ReleaseStoredItemAt(_storedItems[_storedItems.Count - 1], _lastMapMousePoint);
                 return true;
             }
             if (keyData == (Keys.Control | Keys.V))
             {
-                if (_storedCards.Count == 0) return base.ProcessCmdKey(ref msg, keyData);
-                ReleaseCardAt(_storedCards[_storedCards.Count - 1], _lastMapMousePoint);
-                return true;
+                if (TryPasteClipboardImageAt(_lastMapMousePoint)) return true;
+                return base.ProcessCmdKey(ref msg, keyData);
             }
             if (keyData == (Keys.Control | Keys.L))
             {
@@ -344,6 +371,16 @@ namespace PandanciClone
                 return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            const int wmPaste = 0x0302;
+            if (m.Msg == wmPaste && TryPasteClipboardImageAt(_lastMapMousePoint))
+            {
+                return;
+            }
+            base.WndProc(ref m);
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -378,15 +415,17 @@ namespace PandanciClone
 
         private void OnMapMouseDown(object sender, MouseEventArgs e)
         {
+            _map.Focus();
             Point p = PointToMap(e.Location);
             _lastMapMousePoint = p;
             WordCard card = HitCard(p);
             TextNote note = card == null ? HitNote(p) : null;
+            ImageItem image = card == null && note == null ? HitImage(p) : null;
 
             if (e.Button == MouseButtons.Right)
             {
-                SelectItem(card, note);
-                ShowContextMenu(card, note, e.Location);
+                SelectItem(card, note, image);
+                ShowContextMenu(card, note, image, e.Location);
                 return;
             }
 
@@ -422,7 +461,9 @@ namespace PandanciClone
             SelectItem(card, note);
             _dragCard = card;
             _dragNote = null;
+            _dragImage = null;
             _resizeNote = null;
+            _resizeImage = null;
             if (card != null) _dragStartLocation = new Point(card.X, card.Y);
             if (note != null)
             {
@@ -438,7 +479,21 @@ namespace PandanciClone
                     _dragStartLocation = new Point(note.X, note.Y);
                 }
             }
-            if (card == null && note == null)
+            if (image != null)
+            {
+                if (HitImageResizeHandle(image, p))
+                {
+                    _resizeImage = image;
+                    _resizeStartSize = new Size(image.Width, image.Height);
+                    _map.Cursor = Cursors.SizeNWSE;
+                }
+                else
+                {
+                    _dragImage = image;
+                    _dragStartLocation = new Point(image.X, image.Y);
+                }
+            }
+            if (card == null && note == null && image == null)
             {
                 _panning = true;
                 _panStartClient = e.Location;
@@ -455,10 +510,12 @@ namespace PandanciClone
             {
                 Point hoverPoint = _lastMapMousePoint;
                 TextNote hoverNote = HitNote(hoverPoint);
-                _map.Cursor = hoverNote != null && HitNoteResizeHandle(hoverNote, hoverPoint) ? Cursors.SizeNWSE : Cursors.Default;
+                ImageItem hoverImage = hoverNote == null ? HitImage(hoverPoint) : null;
+                bool overResize = (hoverNote != null && HitNoteResizeHandle(hoverNote, hoverPoint)) || (hoverImage != null && HitImageResizeHandle(hoverImage, hoverPoint));
+                _map.Cursor = overResize ? Cursors.SizeNWSE : Cursors.Default;
             }
 
-            if ((_dragCard != null || _dragNote != null || _resizeNote != null) && e.Button == MouseButtons.Left)
+            if ((_dragCard != null || _dragNote != null || _dragImage != null || _resizeNote != null || _resizeImage != null) && e.Button == MouseButtons.Left)
             {
                 AutoScrollWhileDragging(e.Location);
             }
@@ -509,6 +566,22 @@ namespace PandanciClone
                 return;
             }
 
+            if (_resizeImage != null && e.Button == MouseButtons.Left)
+            {
+                int resizeDx = _lastMapMousePoint.X - _dragStartMouse.X;
+                int resizeDy = _lastMapMousePoint.Y - _dragStartMouse.Y;
+                if (Math.Abs(resizeDx) + Math.Abs(resizeDy) > 2) _dragMoved = true;
+
+                Rectangle resizeOldBounds = new Rectangle(_resizeImage.X, _resizeImage.Y, _resizeImage.Width, _resizeImage.Height);
+                _resizeImage.Width = Math.Max(30, _resizeStartSize.Width + resizeDx);
+                _resizeImage.Height = Math.Max(30, _resizeStartSize.Height + resizeDy);
+                Rectangle resizeNewBounds = new Rectangle(_resizeImage.X, _resizeImage.Y, _resizeImage.Width, _resizeImage.Height);
+                resizeOldBounds.Inflate(12, 12);
+                resizeNewBounds.Inflate(12, 12);
+                _map.Invalidate(ToClientRect(Rectangle.Union(resizeOldBounds, resizeNewBounds)));
+                return;
+            }
+
             if (_panning && e.Button == MouseButtons.Left)
             {
                 int panDx = e.Location.X - _panStartClient.X;
@@ -518,7 +591,7 @@ namespace PandanciClone
                 return;
             }
 
-            if (_dragCard == null && _dragNote == null) return;
+            if (_dragCard == null && _dragNote == null && _dragImage == null) return;
             if (e.Button != MouseButtons.Left) return;
 
             Point p = PointToMap(e.Location);
@@ -535,6 +608,11 @@ namespace PandanciClone
             {
                 _dragNote.X = x;
                 _dragNote.Y = y;
+            }
+            if (_dragImage != null)
+            {
+                _dragImage.X = x;
+                _dragImage.Y = y;
             }
 
             Rectangle newBounds = GetDraggedBounds();
@@ -564,7 +642,9 @@ namespace PandanciClone
             }
             _dragCard = null;
             _dragNote = null;
+            _dragImage = null;
             _resizeNote = null;
+            _resizeImage = null;
             _groupDragging = false;
             _groupCardStarts.Clear();
             _groupNoteStarts.Clear();
@@ -609,14 +689,23 @@ namespace PandanciClone
 
             _selectedCard = _selectedCards.Count > 0 ? _selectedCards[0] : null;
             _selectedNote = _selectedCard == null && _selectedNotes.Count > 0 ? _selectedNotes[0] : null;
+            _selectedImage = null;
             _map.SelectedCard = _selectedCard;
             _map.SelectedNote = _selectedNote;
+            _map.SelectedImage = null;
         }
 
         private bool HitNoteResizeHandle(TextNote note, Point p)
         {
             if (note == null) return false;
             Rectangle handle = new Rectangle(note.X + note.Width - 12, note.Y + note.Height - 12, 12, 12);
+            return handle.Contains(p);
+        }
+
+        private bool HitImageResizeHandle(ImageItem image, Point p)
+        {
+            if (image == null) return false;
+            Rectangle handle = new Rectangle(image.X + image.Width - 14, image.Y + image.Height - 14, 14, 14);
             return handle.Contains(p);
         }
 
@@ -635,7 +724,7 @@ namespace PandanciClone
             if (note != null) EditNote(note);
         }
 
-        private void ShowContextMenu(WordCard card, TextNote note, Point screenPoint)
+        private void ShowContextMenu(WordCard card, TextNote note, ImageItem image, Point screenPoint)
         {
             ContextMenuStrip menu = new ContextMenuStrip();
             if (card != null)
@@ -654,14 +743,35 @@ namespace PandanciClone
                 menu.Items.Add("编辑笔记", null, delegate { EditNote(note); });
                 menu.Items.Add("删除笔记", null, delegate { _notes.Remove(note); _selectedNotes.Remove(note); _selectedNote = null; UpdateCanvasSize(); RefreshMapViews(); });
             }
+            else if (image != null)
+            {
+                menu.Items.Add("存储图片", null, delegate { StoreImage(image); });
+                menu.Items.Add("删除图片", null, delegate { DeleteImage(image); });
+            }
             else
             {
                 Point p = PointToMap(screenPoint);
                 menu.Items.Add("添加单词", null, delegate { AddWordAt(p); });
                 menu.Items.Add("添加笔记", null, delegate { AddNoteAt(p); });
+                menu.Items.Add("添加图片", null, delegate { AddImageFromFileAt(p); });
                 AddReleaseMenu(menu, p);
             }
             menu.Show(_map, screenPoint);
+        }
+
+        private bool StoreSelectedItem()
+        {
+            if (_selectedCard != null)
+            {
+                StoreCard(_selectedCard);
+                return true;
+            }
+            if (_selectedImage != null)
+            {
+                StoreImage(_selectedImage);
+                return true;
+            }
+            return false;
         }
 
         private void StoreCard(WordCard card)
@@ -669,27 +779,59 @@ namespace PandanciClone
             if (card == null) return;
             SelectItem(card, null);
             if (!_storedCards.Contains(card)) _storedCards.Add(card);
+            if (!_storedItems.Contains(card)) _storedItems.Add(card);
+            RefreshMapViews();
+        }
+
+        private void StoreImage(ImageItem image)
+        {
+            if (image == null) return;
+            SelectItem(null, null, image);
+            if (!_storedImages.Contains(image)) _storedImages.Add(image);
+            if (!_storedItems.Contains(image)) _storedItems.Add(image);
             RefreshMapViews();
         }
 
         private void AddReleaseMenu(ContextMenuStrip menu, Point target)
         {
-            ToolStripMenuItem release = new ToolStripMenuItem("释放单词");
-            if (_storedCards.Count == 0)
+            ToolStripMenuItem release = new ToolStripMenuItem("释放内容");
+            if (_storedItems.Count == 0)
             {
-                ToolStripMenuItem empty = new ToolStripMenuItem("无已存储单词");
+                ToolStripMenuItem empty = new ToolStripMenuItem("无已存储内容");
                 empty.Enabled = false;
                 release.DropDownItems.Add(empty);
             }
             else
             {
-                foreach (WordCard stored in _storedCards.ToArray())
+                foreach (object stored in _storedItems.ToArray())
                 {
-                    WordCard card = stored;
-                    release.DropDownItems.Add(card.Word, null, delegate { ReleaseCardAt(card, target); });
+                    object item = stored;
+                    release.DropDownItems.Add(GetStoredItemText(item), null, delegate { ReleaseStoredItemAt(item, target); });
                 }
             }
             menu.Items.Add(release);
+        }
+
+        private string GetStoredItemText(object item)
+        {
+            WordCard card = item as WordCard;
+            if (card != null) return card.Word;
+            ImageItem image = item as ImageItem;
+            if (image != null) return "图片 " + Path.GetFileName(image.FilePath);
+            return "内容";
+        }
+
+        private void ReleaseStoredItemAt(object item, Point target)
+        {
+            WordCard card = item as WordCard;
+            if (card != null)
+            {
+                ReleaseCardAt(card, target);
+                return;
+            }
+
+            ImageItem image = item as ImageItem;
+            if (image != null) ReleaseImageAt(image, target);
         }
 
         private void ReleaseCardAt(WordCard card, Point target)
@@ -697,14 +839,36 @@ namespace PandanciClone
             if (card == null || !_cards.Contains(card))
             {
                 _storedCards.Remove(card);
+                _storedItems.Remove(card);
                 RefreshMapViews();
                 return;
             }
 
             MoveCard(card, target.X, target.Y);
             _storedCards.Remove(card);
+            _storedItems.Remove(card);
             SelectItem(card, null);
             UpdateCanvasSize();
+            RefreshMapViews();
+        }
+
+        private void ReleaseImageAt(ImageItem image, Point target)
+        {
+            if (image == null || !_images.Contains(image))
+            {
+                _storedImages.Remove(image);
+                _storedItems.Remove(image);
+                RefreshMapViews();
+                return;
+            }
+
+            image.X = target.X;
+            image.Y = target.Y;
+            _storedImages.Remove(image);
+            _storedItems.Remove(image);
+            SelectItem(null, null, image);
+            UpdateCanvasSize();
+            if (_miniMap != null) _miniMap.RebuildCache();
             RefreshMapViews();
         }
 
@@ -718,10 +882,21 @@ namespace PandanciClone
             return null;
         }
 
+        private ImageItem HitImage(Point p)
+        {
+            for (int i = _images.Count - 1; i >= 0; i--)
+            {
+                ImageItem image = _images[i];
+                if (new Rectangle(image.X, image.Y, image.Width, image.Height).Contains(p)) return image;
+            }
+            return null;
+        }
+
         private Rectangle GetDraggedBounds()
         {
             if (_dragCard != null) return new Rectangle(_dragCard.X, _dragCard.Y, _dragCard.Width, _dragCard.Height);
             if (_dragNote != null) return new Rectangle(_dragNote.X, _dragNote.Y, _dragNote.Width, _dragNote.Height);
+            if (_dragImage != null) return new Rectangle(_dragImage.X, _dragImage.Y, _dragImage.Width, _dragImage.Height);
             return Rectangle.Empty;
         }
 
@@ -743,11 +918,18 @@ namespace PandanciClone
 
         private void SelectItem(WordCard card, TextNote note)
         {
+            SelectItem(card, note, null);
+        }
+
+        private void SelectItem(WordCard card, TextNote note, ImageItem image)
+        {
             ClearMultiSelection();
             _selectedCard = card;
             _selectedNote = note;
+            _selectedImage = image;
             _map.SelectedCard = card;
             _map.SelectedNote = note;
+            _map.SelectedImage = image;
             RefreshMapViews();
         }
 
@@ -1001,6 +1183,106 @@ namespace PandanciClone
             RefreshMapViews();
         }
 
+        private void AddImageFromFileAt(Point p)
+        {
+            using (OpenFileDialog dlg = new OpenFileDialog())
+            {
+                dlg.Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp;*.gif|所有文件 (*.*)|*.*";
+                dlg.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+                string storedPath = CopyImageIntoProject(dlg.FileName);
+                AddImageItemAt(storedPath, p);
+            }
+        }
+
+        private bool TryPasteClipboardImageAt(Point p)
+        {
+            try
+            {
+                if (!Clipboard.ContainsImage()) return false;
+                using (Image image = Clipboard.GetImage())
+                {
+                    if (image == null) return false;
+
+                    string storedPath = SaveClipboardImage(image);
+                    AddImageItemAt(storedPath, p);
+                    return true;
+                }
+            }
+            catch (ExternalException)
+            {
+                MessageBox.Show("读取剪贴板图片失败，请稍后再试。", "添加图片", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return true;
+            }
+        }
+
+        private string CopyImageIntoProject(string sourcePath)
+        {
+            string extension = Path.GetExtension(sourcePath);
+            if (string.IsNullOrEmpty(extension)) extension = ".png";
+            string targetPath = GetUniqueImagePath(extension);
+            File.Copy(sourcePath, targetPath, true);
+            return ToAppRelativePath(targetPath);
+        }
+
+        private string SaveClipboardImage(Image image)
+        {
+            string targetPath = GetUniqueImagePath(".png");
+            image.Save(targetPath, ImageFormat.Png);
+            return ToAppRelativePath(targetPath);
+        }
+
+        private string GetUniqueImagePath(string extension)
+        {
+            // 图片复制到程序目录下，wordmap 只保存相对路径，避免原始文件被移动后丢图。
+            string imageDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "images");
+            Directory.CreateDirectory(imageDir);
+            return Path.Combine(imageDir, DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + "_" + Guid.NewGuid().ToString("N").Substring(0, 8) + extension);
+        }
+
+        private string ToAppRelativePath(string fullPath)
+        {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string full = Path.GetFullPath(fullPath);
+            if (full.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase)) return full.Substring(baseDir.Length);
+            return full;
+        }
+
+        private void AddImageItemAt(string storedPath, Point p)
+        {
+            Size size = GetImageDisplaySize(ResolveImagePath(storedPath));
+            ImageItem item = new ImageItem();
+            item.X = p.X;
+            item.Y = p.Y;
+            item.Width = size.Width;
+            item.Height = size.Height;
+            item.FilePath = storedPath;
+            _images.Add(item);
+            UpdateCanvasSize();
+            if (_miniMap != null) _miniMap.RebuildCache();
+            RefreshMapViews();
+        }
+
+        private Size GetImageDisplaySize(string path)
+        {
+            // 初始导入时限制最大显示尺寸，既保留比例，也避免大图铺满画布。
+            using (Image image = Image.FromFile(path))
+            {
+                const int maxWidth = 360;
+                const int maxHeight = 240;
+                float scale = Math.Min(maxWidth / (float)image.Width, maxHeight / (float)image.Height);
+                scale = Math.Min(1F, Math.Max(0.01F, scale));
+                return new Size(Math.Max(20, (int)(image.Width * scale)), Math.Max(20, (int)(image.Height * scale)));
+            }
+        }
+
+        private static string ResolveImagePath(string path)
+        {
+            if (Path.IsPathRooted(path)) return path;
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, path);
+        }
+
         private void EditNote(TextNote note)
         {
             string text = Prompt.Show("笔记", "编辑笔记", note.Text);
@@ -1081,11 +1363,24 @@ namespace PandanciClone
             int cy = card.Y + card.Height / 2;
             _cards.Remove(card);
             _storedCards.Remove(card);
+            _storedItems.Remove(card);
             _selectedCards.Remove(card);
             _arrows.RemoveAll(delegate(ArrowItem a) { return (a.X1 == cx && a.Y1 == cy) || (a.X2 == cx && a.Y2 == cy); });
             if (_selectedCard == card) SelectItem(null, null);
             UpdateCanvasSize();
             UpdateStats();
+            if (_miniMap != null) _miniMap.RebuildCache();
+            RefreshMapViews();
+        }
+
+        private void DeleteImage(ImageItem image)
+        {
+            if (image == null) return;
+            _images.Remove(image);
+            _storedImages.Remove(image);
+            _storedItems.Remove(image);
+            if (_selectedImage == image) SelectItem(null, null, null);
+            UpdateCanvasSize();
             if (_miniMap != null) _miniMap.RebuildCache();
             RefreshMapViews();
         }
@@ -1189,6 +1484,13 @@ namespace PandanciClone
                 maxX = Math.Max(maxX, n.X + n.Width);
                 maxY = Math.Max(maxY, n.Y + n.Height);
             }
+            foreach (ImageItem image in _images)
+            {
+                minX = Math.Min(minX, image.X);
+                minY = Math.Min(minY, image.Y);
+                maxX = Math.Max(maxX, image.X + image.Width);
+                maxY = Math.Max(maxY, image.Y + image.Height);
+            }
             foreach (ArrowItem a in _arrows)
             {
                 minX = Math.Min(minX, Math.Min(a.X1, a.X2));
@@ -1237,6 +1539,7 @@ namespace PandanciClone
     {
         public List<WordCard> Cards;
         public List<TextNote> Notes;
+        public List<ImageItem> Images;
         public List<ArrowItem> Arrows;
         public Size MapSize = new Size(1, 1);
         public Rectangle MapBounds = Rectangle.Empty;
@@ -1322,6 +1625,13 @@ namespace PandanciClone
                 {
                     foreach (TextNote n in Notes) g.FillRectangle(noteBrush, n.X, n.Y, n.Width, n.Height);
                 }
+                if (Images != null)
+                {
+                    using (Brush imageBrush = new SolidBrush(Color.FromArgb(225, 235, 245)))
+                    {
+                        foreach (ImageItem image in Images) g.FillRectangle(imageBrush, image.X, image.Y, image.Width, image.Height);
+                    }
+                }
                 if (Cards != null)
                 {
                     foreach (WordCard c in Cards)
@@ -1351,16 +1661,21 @@ namespace PandanciClone
     {
         public List<WordCard> Cards;
         public List<TextNote> Notes;
+        public List<ImageItem> Images;
         public List<ArrowItem> Arrows;
         public List<WordCard> StoredCards;
+        public List<ImageItem> StoredImages;
         public List<WordCard> MultiSelectedCards;
         public List<TextNote> MultiSelectedNotes;
         public WordCard SelectedCard;
         public TextNote SelectedNote;
+        public ImageItem SelectedImage;
         public Point OriginOffset { get; set; }
         public Rectangle MapBounds = Rectangle.Empty;
         public Rectangle SelectionBox = Rectangle.Empty;
         public bool ShowSelectionBox;
+        public Func<bool> PasteFromClipboard;
+        private readonly Dictionary<string, Image> _imageCache = new Dictionary<string, Image>();
 
         public MapPanel()
         {
@@ -1380,6 +1695,26 @@ namespace PandanciClone
             Invalidate();
         }
 
+        protected override void WndProc(ref Message m)
+        {
+            const int wmPaste = 0x0302;
+            if (m.Msg == wmPaste && PasteFromClipboard != null && PasteFromClipboard())
+            {
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                foreach (Image image in _imageCache.Values) image.Dispose();
+                _imageCache.Clear();
+            }
+            base.Dispose(disposing);
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -1388,6 +1723,7 @@ namespace PandanciClone
             Rectangle view = new Rectangle(-offset.X - OriginOffset.X, -offset.Y - OriginOffset.Y, ClientSize.Width, ClientSize.Height);
 
             DrawGrid(e.Graphics, view);
+            DrawImages(e.Graphics, view);
             DrawArrows(e.Graphics, view);
             DrawNotes(e.Graphics, view);
             DrawCards(e.Graphics, view);
@@ -1402,6 +1738,62 @@ namespace PandanciClone
                 for (int x = (view.Left / 40) * 40; x < view.Right; x += 40) g.DrawLine(pen, x, view.Top, x, view.Bottom);
                 for (int y = (view.Top / 40) * 40; y < view.Bottom; y += 40) g.DrawLine(pen, view.Left, y, view.Right, y);
             }
+        }
+
+        private void DrawImages(Graphics g, Rectangle view)
+        {
+            if (Images == null) return;
+            using (Pen border = new Pen(Color.FromArgb(150, 150, 150)))
+            using (Pen selectedBorder = new Pen(Color.RoyalBlue, 2F))
+            using (Brush storedMarker = new SolidBrush(Color.RoyalBlue))
+            using (Brush handleBrush = new SolidBrush(Color.RoyalBlue))
+            using (Brush missing = new SolidBrush(Color.FromArgb(245, 245, 245)))
+            using (Brush textBrush = new SolidBrush(Color.Gray))
+            {
+                foreach (ImageItem item in Images)
+                {
+                    Rectangle r = new Rectangle(item.X, item.Y, item.Width, item.Height);
+                    if (!r.IntersectsWith(view)) continue;
+
+                    Image image = GetCachedImage(item.FilePath);
+                    if (image != null)
+                    {
+                        g.DrawImage(image, r);
+                    }
+                    else
+                    {
+                        g.FillRectangle(missing, r);
+                        g.DrawString("图片缺失", Font, textBrush, r);
+                    }
+                    bool selected = item == SelectedImage;
+                    if (StoredImages != null && StoredImages.Contains(item))
+                    {
+                        g.FillRectangle(storedMarker, r.X + 1, r.Y + 1, Math.Max(1, r.Width - 1), 5);
+                    }
+                    g.DrawRectangle(selected ? selectedBorder : border, r);
+                    if (selected)
+                    {
+                        g.FillRectangle(handleBrush, item.X + item.Width - 9, item.Y + item.Height - 9, 8, 8);
+                    }
+                }
+            }
+        }
+
+        private Image GetCachedImage(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            string fullPath = Path.IsPathRooted(path) ? path : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, path);
+            Image cached;
+            if (_imageCache.TryGetValue(fullPath, out cached)) return cached;
+            if (!File.Exists(fullPath)) return null;
+
+            // GDI+ 会锁定直接 FromFile 的文件，所以读入内存后 clone 一份用于长期缓存。
+            using (Image loaded = Image.FromFile(fullPath))
+            {
+                cached = new Bitmap(loaded);
+            }
+            _imageCache[fullPath] = cached;
+            return cached;
         }
 
         private void DrawArrows(Graphics g, Rectangle view)

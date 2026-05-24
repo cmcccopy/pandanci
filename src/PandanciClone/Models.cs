@@ -138,6 +138,39 @@ namespace PandanciClone
         }
     }
 
+    internal sealed class ImageItem
+    {
+        public int X;
+        public int Y;
+        public int Width;
+        public int Height;
+        public string FilePath = "";
+
+        public static ImageItem Parse(string line)
+        {
+            string[] p = line.Split(new char[] { '|' }, 6);
+            if (p.Length < 6 || p[0] != "WLBImage") return null;
+            ImageItem item = new ImageItem();
+            item.Y = SafeInt(p[1], 0);
+            item.X = SafeInt(p[2], 0);
+            item.Width = Math.Max(20, SafeInt(p[3], 160));
+            item.Height = Math.Max(20, SafeInt(p[4], 120));
+            item.FilePath = p[5];
+            return item;
+        }
+
+        public string ToLine()
+        {
+            return string.Join("|", new string[] { "WLBImage", Y.ToString(), X.ToString(), Width.ToString(), Height.ToString(), FilePath });
+        }
+
+        private static int SafeInt(string s, int fallback)
+        {
+            int v;
+            return int.TryParse(s, out v) ? v : fallback;
+        }
+    }
+
     internal sealed class RawItem
     {
         public string Line;
