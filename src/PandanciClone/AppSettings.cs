@@ -11,6 +11,8 @@ namespace PandanciClone
         private readonly string _path;
 
         public string GoogleProxyAddress = "";
+        public string TesseractPath = "";
+        public string OcrLanguage = "eng+chi_sim";
         public bool HasPopupLocation;
         public Point PopupLocation;
         public bool HasPopupSize;
@@ -37,6 +39,14 @@ namespace PandanciClone
                 if (string.Equals(key, "GoogleProxyAddress", StringComparison.OrdinalIgnoreCase))
                 {
                     settings.GoogleProxyAddress = value;
+                }
+                else if (string.Equals(key, "TesseractPath", StringComparison.OrdinalIgnoreCase))
+                {
+                    settings.TesseractPath = value;
+                }
+                else if (string.Equals(key, "OcrLanguage", StringComparison.OrdinalIgnoreCase))
+                {
+                    settings.OcrLanguage = string.IsNullOrWhiteSpace(value) ? "eng+chi_sim" : value;
                 }
                 else if (string.Equals(key, "PopupX", StringComparison.OrdinalIgnoreCase))
                 {
@@ -82,6 +92,8 @@ namespace PandanciClone
         {
             StringBuilder text = new StringBuilder();
             text.Append("GoogleProxyAddress=").AppendLine(GoogleProxyAddress ?? "");
+            text.Append("TesseractPath=").AppendLine(TesseractPath ?? "");
+            text.Append("OcrLanguage=").AppendLine(string.IsNullOrWhiteSpace(OcrLanguage) ? "eng+chi_sim" : OcrLanguage);
             if (HasPopupLocation)
             {
                 text.Append("PopupX=").AppendLine(PopupLocation.X.ToString(CultureInfo.InvariantCulture));

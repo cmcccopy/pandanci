@@ -1,5 +1,7 @@
 ﻿GoogleProxyAddress=127.0.0.1:10801
-PopupX=735
-PopupY=105
-PopupWidth=430
-PopupHeight=560
+TesseractPath=./tesseract
+OcrLanguage=eng+chi_sim
+PopupX=850
+PopupY=220
+PopupWidth=390
+PopupHeight=510

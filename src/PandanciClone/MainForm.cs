@@ -42,6 +42,7 @@ namespace PandanciClone
         private TranslationPopupForm _translationPopup;
         private bool _allowExit;
         private bool _hotkeyRegistered;
+        private bool _screenshotHotkeyRegistered;
         private int _translationRequestId;
 
         private WordCard _selectedCard;
@@ -68,6 +69,7 @@ namespace PandanciClone
 
         private const int WmHotkey = 0x0312;
         private const int HotkeyTranslateSelection = 101;
+        private const int HotkeyTranslateScreenshot = 102;
         private const uint ModAlt = 0x0001;
 
         [DllImport("user32.dll", SetLastError = true)]
@@ -137,10 +139,11 @@ namespace PandanciClone
             menu.Items.Add(file);
             ToolStripMenuItem settings = new ToolStripMenuItem("设置");
             settings.DropDownItems.Add("翻译代理...", null, OnSetTranslationProxy);
+            settings.DropDownItems.Add("OCR 设置...", null, OnSetOcrSettings);
             menu.Items.Add(settings);
             menu.Items.Add(new ToolStripMenuItem("帮助", null, delegate
             {
-                MessageBox.Show("右键画布可添加单词、笔记或图片；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布；选中笔记或图片后拖右下角可调整大小。\r\nAlt+X：存储当前选中的单词或图片。\r\nAlt+V：释放最后存储的内容到鼠标当前位置。\r\nCtrl+V：剪贴板是图片时粘贴图片。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
+                MessageBox.Show("右键画布可添加单词、笔记或图片；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布；选中笔记或图片后拖右下角可调整大小。\r\nAlt+A：划词翻译。\r\nAlt+S：截屏 OCR 翻译。\r\nAlt+X：存储当前选中的单词或图片。\r\nAlt+V：释放最后存储的内容到鼠标当前位置。\r\nCtrl+V：剪贴板是图片时粘贴图片。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
             }));
             mainLayout.Controls.Add(menu, 0, 0);
             MainMenuStrip = menu;
@@ -286,6 +289,10 @@ namespace PandanciClone
             ToolStripMenuItem hotkeyHint = new ToolStripMenuItem("Alt+A 划词翻译");
             hotkeyHint.Enabled = false;
             trayMenu.Items.Add(hotkeyHint);
+
+            ToolStripMenuItem screenshotHint = new ToolStripMenuItem("Alt+S 截屏翻译");
+            screenshotHint.Enabled = false;
+            trayMenu.Items.Add(screenshotHint);
             trayMenu.Items.Add(new ToolStripSeparator());
             trayMenu.Items.Add("退出", null, delegate
             {
@@ -295,7 +302,7 @@ namespace PandanciClone
 
             _notifyIcon = new NotifyIcon();
             _notifyIcon.Icon = SystemIcons.Application;
-            _notifyIcon.Text = "盘单词 - Alt+A 划词翻译";
+            _notifyIcon.Text = "盘单词 - Alt+A 划词翻译 / Alt+S 截屏翻译";
             _notifyIcon.ContextMenuStrip = trayMenu;
             _notifyIcon.Visible = true;
             _notifyIcon.DoubleClick += delegate { ShowMainWindow(); };
@@ -303,19 +310,38 @@ namespace PandanciClone
 
         private void RegisterTranslateHotkey()
         {
-            if (_hotkeyRegistered || !IsHandleCreated) return;
-            _hotkeyRegistered = RegisterHotKey(Handle, HotkeyTranslateSelection, ModAlt, (uint)Keys.A);
+            if (!IsHandleCreated) return;
             if (!_hotkeyRegistered)
             {
-                MessageBox.Show("Alt+A 全局热键注册失败，可能已被其他软件占用。", "划词翻译", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                _hotkeyRegistered = RegisterHotKey(Handle, HotkeyTranslateSelection, ModAlt, (uint)Keys.A);
+                if (!_hotkeyRegistered)
+                {
+                    MessageBox.Show("Alt+A 全局热键注册失败，可能已被其他软件占用。", "划词翻译", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+            if (!_screenshotHotkeyRegistered)
+            {
+                _screenshotHotkeyRegistered = RegisterHotKey(Handle, HotkeyTranslateScreenshot, ModAlt, (uint)Keys.S);
+                if (!_screenshotHotkeyRegistered)
+                {
+                    MessageBox.Show("Alt+S 全局热键注册失败，可能已被其他软件占用。", "截屏翻译", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
             }
         }
 
         private void UnregisterTranslateHotkey()
         {
-            if (!_hotkeyRegistered || !IsHandleCreated) return;
-            UnregisterHotKey(Handle, HotkeyTranslateSelection);
-            _hotkeyRegistered = false;
+            if (!IsHandleCreated) return;
+            if (_hotkeyRegistered)
+            {
+                UnregisterHotKey(Handle, HotkeyTranslateSelection);
+                _hotkeyRegistered = false;
+            }
+            if (_screenshotHotkeyRegistered)
+            {
+                UnregisterHotKey(Handle, HotkeyTranslateScreenshot);
+                _screenshotHotkeyRegistered = false;
+            }
         }
 
         private void ShowMainWindow()
@@ -332,8 +358,15 @@ namespace PandanciClone
                 _translationPopup = new TranslationPopupForm();
                 if (_settings != null && _settings.HasPopupSize)
                 {
-                    int width = Math.Max(_translationPopup.MinimumSize.Width, _settings.PopupSize.Width);
-                    int height = Math.Max(_translationPopup.MinimumSize.Height, _settings.PopupSize.Height);
+                    int width = _settings.PopupSize.Width;
+                    int height = _settings.PopupSize.Height;
+                    if (width >= 430 && height >= 540)
+                    {
+                        width = 390;
+                        height = 510;
+                    }
+                    width = Math.Max(_translationPopup.MinimumSize.Width, width);
+                    height = Math.Max(_translationPopup.MinimumSize.Height, height);
                     _translationPopup.Size = new Size(width, height);
                 }
                 if (_settings != null && _settings.HasPopupLocation)
@@ -363,6 +396,28 @@ namespace PandanciClone
             catch (Exception ex)
             {
                 MessageBox.Show("保存翻译代理失败：" + ex.Message, "翻译代理", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void OnSetOcrSettings(object sender, EventArgs e)
+        {
+            string path = Prompt.Show("tesseract.exe 路径（留空为自动查找，也可以填安装目录）", "OCR 设置", _settings.TesseractPath);
+            if (path == null) return;
+
+            string currentLanguage = string.IsNullOrWhiteSpace(_settings.OcrLanguage) ? "eng+chi_sim" : _settings.OcrLanguage;
+            string language = Prompt.Show("OCR 语言（例如 eng、chi_sim、eng+chi_sim）", "OCR 设置", currentLanguage);
+            if (language == null) return;
+
+            _settings.TesseractPath = path.Trim().Trim('"');
+            _settings.OcrLanguage = string.IsNullOrWhiteSpace(language) ? "eng+chi_sim" : language.Trim();
+            try
+            {
+                _settings.Save();
+                MessageBox.Show("OCR 设置已保存。", "OCR 设置");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("保存 OCR 设置失败：" + ex.Message, "OCR 设置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -540,9 +595,17 @@ namespace PandanciClone
         protected override void WndProc(ref Message m)
         {
             const int wmPaste = 0x0302;
-            if (m.Msg == WmHotkey && m.WParam.ToInt32() == HotkeyTranslateSelection)
+            if (m.Msg == WmHotkey)
             {
-                TranslateSelectedTextByHotkey();
+                int id = m.WParam.ToInt32();
+                if (id == HotkeyTranslateSelection)
+                {
+                    TranslateSelectedTextByHotkey();
+                }
+                else if (id == HotkeyTranslateScreenshot)
+                {
+                    TranslateScreenshotByHotkey();
+                }
                 return;
             }
             if (m.Msg == wmPaste && TryPasteClipboardImageAt(_lastMapMousePoint))
@@ -643,6 +706,97 @@ namespace PandanciClone
             captureThread.IsBackground = true;
             captureThread.SetApartmentState(ApartmentState.STA);
             captureThread.Start();
+        }
+
+        private void TranslateScreenshotByHotkey()
+        {
+            int requestId = Interlocked.Increment(ref _translationRequestId);
+            Bitmap selectedBitmap = null;
+            try
+            {
+                if (_translationPopup != null && !_translationPopup.IsDisposed && _translationPopup.Visible)
+                {
+                    _translationPopup.Hide();
+                    Application.DoEvents();
+                    Thread.Sleep(80);
+                }
+
+                using (DpiAwarenessScope.BeginPerMonitorAware())
+                {
+                    Rectangle virtualBounds;
+                    using (Bitmap screenBitmap = CaptureVirtualScreen(out virtualBounds))
+                    using (ScreenCaptureForm captureForm = new ScreenCaptureForm(screenBitmap, virtualBounds))
+                    {
+                        if (captureForm.ShowDialog() != DialogResult.OK) return;
+                        selectedBitmap = captureForm.TakeSelectedBitmap();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowTranslationError("截屏失败：" + ex.Message);
+                if (selectedBitmap != null) selectedBitmap.Dispose();
+                return;
+            }
+
+            if (selectedBitmap == null) return;
+
+            EnsureTranslationPopup().ShowOcrReading();
+            string tesseractPath = _settings.TesseractPath;
+            string ocrLanguage = _settings.OcrLanguage;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    string text;
+                    using (selectedBitmap)
+                    {
+                        OcrService service = new OcrService(tesseractPath, ocrLanguage);
+                        text = service.Recognize(selectedBitmap);
+                    }
+                    BeginTranslateRecognizedText(requestId, text);
+                }
+                catch (Exception ex)
+                {
+                    BeginShowTranslationError(requestId, "OCR 识别失败：" + ex.Message);
+                }
+            });
+        }
+
+        private static Bitmap CaptureVirtualScreen(out Rectangle bounds)
+        {
+            bounds = SystemInformation.VirtualScreen;
+            Bitmap bitmap = new Bitmap(Math.Max(1, bounds.Width), Math.Max(1, bounds.Height), PixelFormat.Format24bppRgb);
+            using (Graphics g = Graphics.FromImage(bitmap))
+            {
+                g.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy);
+            }
+            return bitmap;
+        }
+
+        private void BeginTranslateRecognizedText(int requestId, string text)
+        {
+            try
+            {
+                BeginInvoke(new MethodInvoker(delegate
+                {
+                    if (requestId != _translationRequestId) return;
+                    if (string.IsNullOrWhiteSpace(text))
+                    {
+                        ShowTranslationError("OCR 没有识别到文字。");
+                        return;
+                    }
+
+                    TranslationPopupForm popup = EnsureTranslationPopup();
+                    TranslationLanguageMode languageMode = popup.LanguageMode;
+                    popup.ShowLoading(text);
+                    StartProviderTranslation(requestId, text, TranslationProvider.Google, languageMode);
+                    StartProviderTranslation(requestId, text, TranslationProvider.Bing, languageMode);
+                }));
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
 
         private void StartProviderTranslation(int requestId, string text, TranslationProvider provider, TranslationLanguageMode languageMode)

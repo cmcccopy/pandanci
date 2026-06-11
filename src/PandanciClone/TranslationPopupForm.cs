@@ -66,17 +66,17 @@ namespace PandanciClone
         public TranslationPopupForm()
         {
             Text = "划词翻译";
-            Width = 430;
-            Height = 560;
-            MinimumSize = new Size(390, 460);
+            Width = 390;
+            Height = 510;
+            MinimumSize = new Size(360, 430);
             FormBorderStyle = FormBorderStyle.None;
-            BackColor = Color.White;
+            BackColor = Color.FromArgb(248, 249, 252);
             MaximizeBox = false;
             MinimizeBox = false;
             ShowInTaskbar = false;
             TopMost = true;
             StartPosition = FormStartPosition.Manual;
-            Font = new Font("Microsoft YaHei UI", 10F);
+            Font = new Font("Microsoft YaHei UI", 9F);
 
             _toolTip = new ToolTip();
             _toolTip.AutoPopDelay = 8000;
@@ -87,14 +87,14 @@ namespace PandanciClone
             _titleLabel.AutoSize = false;
             _titleLabel.Text = "划词翻译";
             _titleLabel.TextAlign = ContentAlignment.MiddleLeft;
-            _titleLabel.Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold);
+            _titleLabel.Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold);
             _titleLabel.ForeColor = Color.FromArgb(35, 35, 35);
             Controls.Add(_titleLabel);
 
             _languageModeBox = new ComboBox();
             _languageModeBox.DropDownStyle = ComboBoxStyle.DropDownList;
             _languageModeBox.FlatStyle = FlatStyle.Flat;
-            _languageModeBox.Font = new Font("Microsoft YaHei UI", 9F);
+            _languageModeBox.Font = new Font("Microsoft YaHei UI", 8.5F);
             _languageModeBox.Items.AddRange(new object[] { "自动识别", "English -> 简中", "简中 -> English" });
             _languageModeBox.SelectedIndex = 0;
             _languageModeBox.SelectedIndexChanged += OnLanguageModeChanged;
@@ -105,18 +105,18 @@ namespace PandanciClone
             Controls.Add(_pinButton);
 
             _closeButton = MakeIconButton("×");
-            _closeButton.Font = new Font("Microsoft YaHei UI", 15F, FontStyle.Bold);
+            _closeButton.Font = new Font("Microsoft YaHei UI", 13F, FontStyle.Bold);
             _closeButton.Click += delegate { Hide(); };
             Controls.Add(_closeButton);
 
-            _inputCard = new RoundedPanel { BackColor = Color.FromArgb(239, 239, 239), Radius = 16 };
+            _inputCard = new RoundedPanel { BackColor = Color.White, Radius = 14 };
             Controls.Add(_inputCard);
 
             _sourceBox = new TextBox();
             _sourceBox.BorderStyle = BorderStyle.None;
             _sourceBox.BackColor = _inputCard.BackColor;
             _sourceBox.Multiline = true;
-            _sourceBox.Font = new Font("Microsoft YaHei UI", 17F);
+            _sourceBox.Font = new Font("Microsoft YaHei UI", 14.5F);
             _sourceBox.KeyDown += OnSourceBoxKeyDown;
             _sourceBox.TextChanged += OnSourceBoxTextChanged;
             _inputCard.Controls.Add(_sourceBox);
@@ -168,8 +168,8 @@ namespace PandanciClone
             _sourceLangPill = new Label();
             _sourceLangPill.AutoSize = false;
             _sourceLangPill.TextAlign = ContentAlignment.MiddleCenter;
-            _sourceLangPill.Font = new Font("Microsoft YaHei UI", 11F);
-            _sourceLangPill.BackColor = Color.WhiteSmoke;
+            _sourceLangPill.Font = new Font("Microsoft YaHei UI", 9.5F);
+            _sourceLangPill.BackColor = Color.FromArgb(244, 247, 252);
             _inputCard.Controls.Add(_sourceLangPill);
 
             _translateButton = new Button();
@@ -177,12 +177,12 @@ namespace PandanciClone
             _translateButton.FlatAppearance.BorderSize = 0;
             _translateButton.BackColor = Color.FromArgb(72, 120, 232);
             _translateButton.ForeColor = Color.White;
-            _translateButton.Font = new Font("Microsoft YaHei UI", 12F, FontStyle.Bold);
-            _translateButton.Text = "译  翻译";
+            _translateButton.Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold);
+            _translateButton.Text = "翻译";
             _translateButton.Click += delegate { RaiseTranslateTextRequested(); };
             _inputCard.Controls.Add(_translateButton);
 
-            _directionCard = new RoundedPanel { BackColor = Color.FromArgb(224, 224, 224), Radius = 14 };
+            _directionCard = new RoundedPanel { BackColor = Color.FromArgb(242, 245, 249), Radius = 12 };
             Controls.Add(_directionCard);
 
             _fromLangLabel = MakeDirectionLabel(ContentAlignment.MiddleLeft);
@@ -190,7 +190,7 @@ namespace PandanciClone
 
             _swapLabel = MakeDirectionLabel(ContentAlignment.MiddleCenter);
             _swapLabel.Text = "⇄";
-            _swapLabel.Font = new Font("Microsoft YaHei UI", 18F, FontStyle.Bold);
+            _swapLabel.Font = new Font("Microsoft YaHei UI", 15F, FontStyle.Bold);
             _swapLabel.Cursor = Cursors.Hand;
             _swapLabel.Click += delegate { SwapLanguageMode(); };
             _directionCard.Controls.Add(_swapLabel);
@@ -206,6 +206,7 @@ namespace PandanciClone
 
             _statusLabel = new Label();
             _statusLabel.AutoEllipsis = true;
+            _statusLabel.Font = new Font("Microsoft YaHei UI", 8.5F);
             _statusLabel.ForeColor = Color.FromArgb(100, 100, 100);
             _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
             Controls.Add(_statusLabel);
@@ -385,6 +386,21 @@ namespace PandanciClone
             ShowPopup(false);
         }
 
+        public void ShowOcrReading()
+        {
+            SetSourceText("正在识别截图文字...");
+            _sourceBox.ReadOnly = true;
+            _translatedText = "";
+            _googleText = "";
+            _bingText = "";
+            _google.TextBox.Text = "正在识别截图文字...";
+            _bing.TextBox.Text = "";
+            _statusLabel.Text = "Alt+S OCR";
+            UpdateDirectionLabels();
+            UpdateButtons();
+            ShowPopup(true);
+        }
+
         public void ShowResult(TranslationResult result)
         {
             if (result == null) return;
@@ -430,59 +446,59 @@ namespace PandanciClone
                 return;
             }
 
-            int margin = 8;
+            int margin = 10;
             int contentWidth = Math.Max(1, ClientSize.Width - margin * 2);
-            _titleLabel.SetBounds(16, 8, Math.Max(90, contentWidth - 250), 34);
-            _languageModeBox.SetBounds(Math.Max(120, ClientSize.Width - 248), 12, 158, 28);
-            _pinButton.SetBounds(ClientSize.Width - 82, 8, 34, 34);
-            _closeButton.SetBounds(ClientSize.Width - 42, 8, 34, 34);
+            _titleLabel.SetBounds(16, 7, Math.Max(80, contentWidth - 220), 30);
+            _languageModeBox.SetBounds(Math.Max(108, ClientSize.Width - 214), 10, 138, 26);
+            _pinButton.SetBounds(ClientSize.Width - 72, 7, 30, 30);
+            _closeButton.SetBounds(ClientSize.Width - 38, 7, 30, 30);
 
-            _inputCard.SetBounds(margin, 56, contentWidth, 164);
-            _sourceBox.SetBounds(24, 24, _inputCard.Width - 48, 72);
-            _speakSourceButton.SetBounds(20, 118, 34, 34);
-            _copySourceButton.SetBounds(58, 118, 34, 34);
-            _pasteButton.SetBounds(96, 118, 34, 34);
-            _normalizeButton.SetBounds(134, 118, 34, 34);
-            _clearButton.SetBounds(172, 118, 34, 34);
-            _sourceLangPill.SetBounds(218, 120, 86, 30);
-            _translateButton.SetBounds(_inputCard.Width - 114, 110, 96, 44);
+            _inputCard.SetBounds(margin, 46, contentWidth, 136);
+            _sourceBox.SetBounds(18, 18, _inputCard.Width - 36, 58);
+            _speakSourceButton.SetBounds(16, 98, 28, 28);
+            _copySourceButton.SetBounds(48, 98, 28, 28);
+            _pasteButton.SetBounds(80, 98, 28, 28);
+            _normalizeButton.SetBounds(112, 98, 28, 28);
+            _clearButton.SetBounds(144, 98, 28, 28);
+            _sourceLangPill.SetBounds(178, 99, 70, 26);
+            _translateButton.SetBounds(_inputCard.Width - 92, 92, 76, 36);
 
-            _directionCard.SetBounds(margin, _inputCard.Bottom + 14, contentWidth, 52);
+            _directionCard.SetBounds(margin, _inputCard.Bottom + 10, contentWidth, 44);
             int third = _directionCard.Width / 3;
-            _fromLangLabel.SetBounds(24, 0, third - 24, _directionCard.Height);
+            _fromLangLabel.SetBounds(18, 0, third - 18, _directionCard.Height);
             _swapLabel.SetBounds(third, 0, third, _directionCard.Height);
-            _toLangLabel.SetBounds(third * 2, 0, _directionCard.Width - third * 2 - 24, _directionCard.Height);
+            _toLangLabel.SetBounds(third * 2, 0, _directionCard.Width - third * 2 - 18, _directionCard.Height);
 
-            int resultTop = _directionCard.Bottom + 16;
-            int bottomTop = ClientSize.Height - 42;
-            int available = Math.Max(120, bottomTop - resultTop - 12);
-            int googleHeight = _google.Collapsed ? 40 : Math.Max(86, available / (_bing.Collapsed ? 1 : 2));
-            int bingHeight = _bing.Collapsed ? 40 : Math.Max(86, available - googleHeight - 10);
-            if (_google.Collapsed && !_bing.Collapsed) bingHeight = Math.Max(86, available - googleHeight - 10);
-            if (!_google.Collapsed && _bing.Collapsed) googleHeight = Math.Max(86, available - bingHeight - 10);
+            int resultTop = _directionCard.Bottom + 10;
+            int bottomTop = ClientSize.Height - 38;
+            int available = Math.Max(108, bottomTop - resultTop - 10);
+            int googleHeight = _google.Collapsed ? 36 : Math.Max(78, available / (_bing.Collapsed ? 1 : 2));
+            int bingHeight = _bing.Collapsed ? 36 : Math.Max(78, available - googleHeight - 8);
+            if (_google.Collapsed && !_bing.Collapsed) bingHeight = Math.Max(78, available - googleHeight - 8);
+            if (!_google.Collapsed && _bing.Collapsed) googleHeight = Math.Max(78, available - bingHeight - 8);
 
             _google.Card.SetBounds(margin, resultTop, contentWidth, googleHeight);
             LayoutResultCard(_google);
-            _bing.Card.SetBounds(margin, _google.Card.Bottom + 10, contentWidth, bingHeight);
+            _bing.Card.SetBounds(margin, _google.Card.Bottom + 8, contentWidth, bingHeight);
             LayoutResultCard(_bing);
 
-            _statusLabel.SetBounds(margin + 4, bottomTop, Math.Max(80, contentWidth - 188), 30);
-            _copyAllButton.SetBounds(ClientSize.Width - 172, bottomTop, 80, 32);
-            _saveButton.SetBounds(ClientSize.Width - 84, bottomTop, 76, 32);
+            _statusLabel.SetBounds(margin + 2, bottomTop, Math.Max(80, contentWidth - 152), 26);
+            _copyAllButton.SetBounds(ClientSize.Width - 142, bottomTop, 66, 28);
+            _saveButton.SetBounds(ClientSize.Width - 72, bottomTop, 62, 28);
             _resizeGrip.SetBounds(ClientSize.Width - 22, ClientSize.Height - 22, 18, 18);
         }
 
         private void LayoutResultCard(ResultCardUi ui)
         {
-            ui.Header.SetBounds(0, 0, ui.Card.Width, 36);
-            ui.Title.SetBounds(18, 0, Math.Max(80, ui.Card.Width - 214), 36);
-            int x = ui.Card.Width - 188;
-            ui.SpeakButton.SetBounds(x, 4, 30, 28);
-            ui.CopyButton.SetBounds(x + 34, 4, 30, 28);
-            ui.BackButton.SetBounds(x + 68, 4, 30, 28);
-            ui.RetryButton.SetBounds(x + 102, 4, 30, 28);
-            ui.CollapseButton.SetBounds(ui.Card.Width - 42, 4, 30, 28);
-            ui.TextBox.SetBounds(20, 46, ui.Card.Width - 40, Math.Max(24, ui.Card.Height - 56));
+            ui.Header.SetBounds(0, 0, ui.Card.Width, 32);
+            ui.Title.SetBounds(14, 0, Math.Max(70, ui.Card.Width - 184), 32);
+            int x = ui.Card.Width - 162;
+            ui.SpeakButton.SetBounds(x, 3, 26, 26);
+            ui.CopyButton.SetBounds(x + 29, 3, 26, 26);
+            ui.BackButton.SetBounds(x + 58, 3, 26, 26);
+            ui.RetryButton.SetBounds(x + 87, 3, 26, 26);
+            ui.CollapseButton.SetBounds(ui.Card.Width - 32, 3, 26, 26);
+            ui.TextBox.SetBounds(16, 40, ui.Card.Width - 32, Math.Max(22, ui.Card.Height - 48));
             ui.TextBox.Visible = !ui.Collapsed;
             ui.SpeakButton.Visible = !ui.Collapsed;
             ui.CopyButton.Visible = !ui.Collapsed;
@@ -817,15 +833,16 @@ namespace PandanciClone
         private ResultCardUi MakeResultCard(string title)
         {
             ResultCardUi ui = new ResultCardUi();
-            ui.Card = new RoundedPanel { BackColor = Color.FromArgb(239, 239, 239), Radius = 12 };
-            ui.Header = new Panel { BackColor = Color.FromArgb(222, 222, 222) };
+            ui.Card = new RoundedPanel { BackColor = Color.White, Radius = 12 };
+            ui.Header = new Panel { BackColor = Color.FromArgb(244, 246, 249) };
             ui.Card.Controls.Add(ui.Header);
 
             ui.Title = new Label();
             ui.Title.Text = title;
             ui.Title.AutoSize = false;
             ui.Title.TextAlign = ContentAlignment.MiddleLeft;
-            ui.Title.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+            ui.Title.Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Bold);
+            ui.Title.ForeColor = Color.FromArgb(42, 48, 58);
             ui.Card.Controls.Add(ui.Title);
 
             ui.SpeakButton = MakeCardButton("🔊");
@@ -854,7 +871,8 @@ namespace PandanciClone
             ui.TextBox.Multiline = true;
             ui.TextBox.ReadOnly = true;
             ui.TextBox.ScrollBars = ScrollBars.Vertical;
-            ui.TextBox.Font = new Font("Microsoft YaHei UI", 14F);
+            ui.TextBox.Font = new Font("Microsoft YaHei UI", 12F);
+            ui.TextBox.ForeColor = Color.FromArgb(35, 35, 35);
             ui.TextBox.TabStop = false;
             ui.Card.Controls.Add(ui.TextBox);
             return ui;
@@ -866,17 +884,17 @@ namespace PandanciClone
             button.Text = text;
             button.FlatStyle = FlatStyle.Flat;
             button.FlatAppearance.BorderSize = 0;
-            button.BackColor = Color.White;
-            button.ForeColor = Color.FromArgb(110, 110, 110);
-            button.Font = new Font("Microsoft YaHei UI", 12F);
+            button.BackColor = Color.FromArgb(248, 249, 252);
+            button.ForeColor = Color.FromArgb(82, 88, 98);
+            button.Font = new Font("Microsoft YaHei UI", 10.5F);
             return button;
         }
 
         private static Button MakeCardButton(string text)
         {
             Button button = MakeIconButton(text);
-            button.BackColor = Color.FromArgb(239, 239, 239);
-            button.ForeColor = Color.Black;
+            button.BackColor = Color.White;
+            button.ForeColor = Color.FromArgb(55, 62, 72);
             return button;
         }
 
@@ -885,9 +903,10 @@ namespace PandanciClone
             Button button = new Button();
             button.Text = text;
             button.FlatStyle = FlatStyle.Flat;
-            button.FlatAppearance.BorderColor = Color.FromArgb(210, 210, 210);
+            button.FlatAppearance.BorderColor = Color.FromArgb(216, 222, 232);
             button.BackColor = Color.White;
-            button.Font = new Font("Microsoft YaHei UI", 10F);
+            button.ForeColor = Color.FromArgb(45, 52, 64);
+            button.Font = new Font("Microsoft YaHei UI", 8.8F);
             return button;
         }
 
@@ -896,8 +915,8 @@ namespace PandanciClone
             Label label = new Label();
             label.AutoSize = false;
             label.TextAlign = alignment;
-            label.Font = new Font("Microsoft YaHei UI", 13F);
-            label.ForeColor = Color.Black;
+            label.Font = new Font("Microsoft YaHei UI", 10.5F);
+            label.ForeColor = Color.FromArgb(45, 52, 64);
             return label;
         }
 
