@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace PandanciClone
@@ -25,6 +26,9 @@ namespace PandanciClone
         private readonly Dictionary<WordCard, Point> _groupCardStarts = new Dictionary<WordCard, Point>();
         private readonly Dictionary<TextNote, Point> _groupNoteStarts = new Dictionary<TextNote, Point>();
         private readonly DictionaryService _dictionary;
+        private readonly SelectedTextService _selectedText;
+        private readonly TranslationService _translation;
+        private readonly AppSettings _settings;
 
         private string _currentFile;
         private MapPanel _map;
@@ -34,6 +38,11 @@ namespace PandanciClone
         private TextBox _searchBox;
         private Label _statsLabel;
         private SplitContainer _rootSplit;
+        private NotifyIcon _notifyIcon;
+        private TranslationPopupForm _translationPopup;
+        private bool _allowExit;
+        private bool _hotkeyRegistered;
+        private int _translationRequestId;
 
         private WordCard _selectedCard;
         private TextNote _selectedNote;
@@ -57,11 +66,26 @@ namespace PandanciClone
         private Point _panStartClient;
         private Point _panStartScroll;
 
+        private const int WmHotkey = 0x0312;
+        private const int HotkeyTranslateSelection = 101;
+        private const uint ModAlt = 0x0001;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
         public MainForm()
         {
             _currentFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wordmap.wordmap");
             _dictionary = new DictionaryService(AppDomain.CurrentDomain.BaseDirectory);
+            _selectedText = new SelectedTextService();
+            _settings = AppSettings.Load(AppDomain.CurrentDomain.BaseDirectory);
+            _translation = new TranslationService();
+            _translation.GoogleProxyAddress = _settings.GoogleProxyAddress;
             BuildUi();
+            BuildTray();
 
             string config = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.txt");
             if (File.Exists(config))
@@ -72,6 +96,18 @@ namespace PandanciClone
 
             if (File.Exists(_currentFile)) LoadWordMap(_currentFile);
             else LoadWordMap(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "blank.wordmap"));
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            RegisterTranslateHotkey();
+        }
+
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            UnregisterTranslateHotkey();
+            base.OnHandleDestroyed(e);
         }
 
         private void BuildUi()
@@ -99,6 +135,9 @@ namespace PandanciClone
             file.DropDownItems.Add("另存为", null, OnSaveAs);
             file.DropDownItems.Add("退出", null, delegate { Close(); });
             menu.Items.Add(file);
+            ToolStripMenuItem settings = new ToolStripMenuItem("设置");
+            settings.DropDownItems.Add("翻译代理...", null, OnSetTranslationProxy);
+            menu.Items.Add(settings);
             menu.Items.Add(new ToolStripMenuItem("帮助", null, delegate
             {
                 MessageBox.Show("右键画布可添加单词、笔记或图片；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布；选中笔记或图片后拖右下角可调整大小。\r\nAlt+X：存储当前选中的单词或图片。\r\nAlt+V：释放最后存储的内容到鼠标当前位置。\r\nCtrl+V：剪贴板是图片时粘贴图片。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
@@ -231,6 +270,131 @@ namespace PandanciClone
             _map.Resize += delegate { ClampLeftPanelWidth(); UpdateCanvasSize(); RefreshMapViews(true); };
             right.Controls.Add(_map, 0, 1);
             Shown += delegate { ClampLeftPanelWidth(); };
+        }
+
+        private void BuildTray()
+        {
+            ContextMenuStrip trayMenu = new ContextMenuStrip();
+            trayMenu.Items.Add("打开盘单词", null, delegate { ShowMainWindow(); });
+            trayMenu.Items.Add("隐藏窗口", null, delegate { Hide(); });
+            trayMenu.Items.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem providerHint = new ToolStripMenuItem("Google + Bing 同时翻译");
+            providerHint.Enabled = false;
+            trayMenu.Items.Add(providerHint);
+
+            ToolStripMenuItem hotkeyHint = new ToolStripMenuItem("Alt+A 划词翻译");
+            hotkeyHint.Enabled = false;
+            trayMenu.Items.Add(hotkeyHint);
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add("退出", null, delegate
+            {
+                _allowExit = true;
+                Close();
+            });
+
+            _notifyIcon = new NotifyIcon();
+            _notifyIcon.Icon = SystemIcons.Application;
+            _notifyIcon.Text = "盘单词 - Alt+A 划词翻译";
+            _notifyIcon.ContextMenuStrip = trayMenu;
+            _notifyIcon.Visible = true;
+            _notifyIcon.DoubleClick += delegate { ShowMainWindow(); };
+        }
+
+        private void RegisterTranslateHotkey()
+        {
+            if (_hotkeyRegistered || !IsHandleCreated) return;
+            _hotkeyRegistered = RegisterHotKey(Handle, HotkeyTranslateSelection, ModAlt, (uint)Keys.A);
+            if (!_hotkeyRegistered)
+            {
+                MessageBox.Show("Alt+A 全局热键注册失败，可能已被其他软件占用。", "划词翻译", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void UnregisterTranslateHotkey()
+        {
+            if (!_hotkeyRegistered || !IsHandleCreated) return;
+            UnregisterHotKey(Handle, HotkeyTranslateSelection);
+            _hotkeyRegistered = false;
+        }
+
+        private void ShowMainWindow()
+        {
+            Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+        }
+
+        private TranslationPopupForm EnsureTranslationPopup()
+        {
+            if (_translationPopup == null || _translationPopup.IsDisposed)
+            {
+                _translationPopup = new TranslationPopupForm();
+                if (_settings != null && _settings.HasPopupSize)
+                {
+                    int width = Math.Max(_translationPopup.MinimumSize.Width, _settings.PopupSize.Width);
+                    int height = Math.Max(_translationPopup.MinimumSize.Height, _settings.PopupSize.Height);
+                    _translationPopup.Size = new Size(width, height);
+                }
+                if (_settings != null && _settings.HasPopupLocation)
+                {
+                    _translationPopup.SetPreferredLocation(_settings.PopupLocation);
+                }
+                _translationPopup.SaveWordRequested += OnPopupSaveWordRequested;
+                _translationPopup.PopupLocationChanged += OnPopupLocationChanged;
+                _translationPopup.TranslateTextRequested += OnPopupTranslateTextRequested;
+            }
+            return _translationPopup;
+        }
+
+        private void OnSetTranslationProxy(object sender, EventArgs e)
+        {
+            string current = _settings.GoogleProxyAddress;
+            string value = Prompt.Show("Google 翻译代理地址（留空为直连，例如 127.0.0.1:10801）", "翻译代理", current);
+            if (value == null) return;
+
+            _settings.GoogleProxyAddress = value.Trim();
+            _translation.GoogleProxyAddress = _settings.GoogleProxyAddress;
+            try
+            {
+                _settings.Save();
+                MessageBox.Show(string.IsNullOrWhiteSpace(_settings.GoogleProxyAddress) ? "Google 翻译已设置为直连。" : "Google 翻译代理已保存：" + _settings.GoogleProxyAddress, "翻译代理");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("保存翻译代理失败：" + ex.Message, "翻译代理", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void OnPopupLocationChanged(object sender, EventArgs e)
+        {
+            TranslationPopupForm popup = sender as TranslationPopupForm;
+            if (popup == null || _settings == null) return;
+            _settings.PopupLocation = popup.Location;
+            _settings.HasPopupLocation = true;
+            _settings.PopupSize = popup.Size;
+            _settings.HasPopupSize = true;
+            try
+            {
+                _settings.Save();
+            }
+            catch
+            {
+                // Popup placement is a convenience setting; ignore transient write failures.
+            }
+        }
+
+        private void OnPopupTranslateTextRequested(object sender, EventArgs e)
+        {
+            TranslationPopupForm popup = EnsureTranslationPopup();
+            string text = popup.SourceText;
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            int requestId = Interlocked.Increment(ref _translationRequestId);
+            TranslationLanguageMode languageMode = popup.LanguageMode;
+            popup.ShowLoading(text);
+            StartProviderTranslation(requestId, text, TranslationProvider.Google, languageMode);
+            StartProviderTranslation(requestId, text, TranslationProvider.Bing, languageMode);
         }
 
         private static void AddToolbarButton(FlowLayoutPanel toolbar, string text, EventHandler click)
@@ -376,6 +540,11 @@ namespace PandanciClone
         protected override void WndProc(ref Message m)
         {
             const int wmPaste = 0x0302;
+            if (m.Msg == WmHotkey && m.WParam.ToInt32() == HotkeyTranslateSelection)
+            {
+                TranslateSelectedTextByHotkey();
+                return;
+            }
             if (m.Msg == wmPaste && TryPasteClipboardImageAt(_lastMapMousePoint))
             {
                 return;
@@ -383,8 +552,32 @@ namespace PandanciClone
             base.WndProc(ref m);
         }
 
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            if (WindowState == FormWindowState.Minimized)
+            {
+                Hide();
+            }
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            if (!_allowExit && e.CloseReason == CloseReason.UserClosing)
+            {
+                try
+                {
+                    SaveCurrentFile();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("自动保存失败：" + ex.Message, "自动保存", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                e.Cancel = true;
+                Hide();
+                return;
+            }
+
             try
             {
                 SaveCurrentFile();
@@ -393,7 +586,109 @@ namespace PandanciClone
             {
                 MessageBox.Show("自动保存失败：" + ex.Message, "自动保存", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+            if (_notifyIcon != null)
+            {
+                _notifyIcon.Visible = false;
+                _notifyIcon.Dispose();
+                _notifyIcon = null;
+            }
+            if (_translationPopup != null)
+            {
+                _translationPopup.Dispose();
+                _translationPopup = null;
+            }
             base.OnFormClosing(e);
+        }
+
+        private void TranslateSelectedTextByHotkey()
+        {
+            int requestId = Interlocked.Increment(ref _translationRequestId);
+            EnsureTranslationPopup().ShowReading();
+
+            Thread captureThread = new Thread(new ThreadStart(delegate
+            {
+                string text;
+                try
+                {
+                    text = _selectedText.CaptureSelectedText();
+                }
+                catch (Exception ex)
+                {
+                    BeginShowTranslationError(requestId, "读取选中文本失败：" + ex.Message);
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    BeginShowTranslationError(requestId, "没有检测到选中文本。请先用鼠标选中单词，再按 Alt+A。");
+                    return;
+                }
+
+                try
+                {
+                    BeginInvoke(new MethodInvoker(delegate
+                    {
+                        if (requestId != _translationRequestId) return;
+                        TranslationPopupForm popup = EnsureTranslationPopup();
+                        TranslationLanguageMode languageMode = popup.LanguageMode;
+                        popup.ShowLoading(text);
+                        StartProviderTranslation(requestId, text, TranslationProvider.Google, languageMode);
+                        StartProviderTranslation(requestId, text, TranslationProvider.Bing, languageMode);
+                    }));
+                }
+                catch (InvalidOperationException)
+                {
+                }
+            }));
+            captureThread.IsBackground = true;
+            captureThread.SetApartmentState(ApartmentState.STA);
+            captureThread.Start();
+        }
+
+        private void StartProviderTranslation(int requestId, string text, TranslationProvider provider, TranslationLanguageMode languageMode)
+        {
+            string googleProxyAddress = _settings.GoogleProxyAddress;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                TranslationService service = new TranslationService();
+                service.GoogleProxyAddress = googleProxyAddress;
+                TranslationResult result = service.Translate(text, provider, languageMode);
+                try
+                {
+                    BeginInvoke(new MethodInvoker(delegate
+                    {
+                        if (requestId != _translationRequestId) return;
+                        EnsureTranslationPopup().ShowProviderResult(result);
+                    }));
+                }
+                catch (InvalidOperationException)
+                {
+                }
+            });
+        }
+
+        private void BeginShowTranslationError(int requestId, string message)
+        {
+            try
+            {
+                BeginInvoke(new MethodInvoker(delegate
+                {
+                    if (requestId != _translationRequestId) return;
+                    ShowTranslationError(message);
+                }));
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        private void ShowTranslationError(string message)
+        {
+            TranslationResult result = new TranslationResult();
+            result.SourceText = "";
+            result.Provider = _translation.Provider.ToString();
+            result.Error = message;
+            EnsureTranslationPopup().ShowResult(result);
         }
 
         private void WriteCurrentFileToConfig(string path)
@@ -1154,6 +1449,12 @@ namespace PandanciClone
         {
             string word = Prompt.Show("单词", "添加单词");
             if (string.IsNullOrWhiteSpace(word)) return;
+            AddWordCardAt(p, word.Trim());
+        }
+
+        private void AddWordCardAt(Point p, string word)
+        {
+            if (string.IsNullOrWhiteSpace(word)) return;
             WordCard c = new WordCard();
             c.Word = word.Trim();
             c.X = p.X;
@@ -1165,6 +1466,26 @@ namespace PandanciClone
             UpdateCanvasSize();
             UpdateStats();
             RefreshMapViews();
+        }
+
+        private void OnPopupSaveWordRequested(object sender, EventArgs e)
+        {
+            if (_translationPopup == null) return;
+            string word = NormalizePopupWord(_translationPopup.SourceText);
+            if (string.IsNullOrWhiteSpace(word)) return;
+
+            Point target = _lastMapMousePoint == Point.Empty ? new Point(80, 80) : _lastMapMousePoint;
+            AddWordCardAt(target, word);
+            SaveCurrentFile();
+        }
+
+        private static string NormalizePopupWord(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+            string value = text.Trim();
+            char[] trimChars = new char[] { ' ', '\t', '\r', '\n', '.', ',', ';', ':', '!', '?', '"', '\'', '(', ')', '[', ']', '{', '}' };
+            value = value.Trim(trimChars);
+            return value.Length > 80 ? value.Substring(0, 80) : value;
         }
 
         private void AddNoteAt(Point p)

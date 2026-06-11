@@ -6,6 +6,7 @@ $refs = @(
     "/r:System.Core.dll",
     "/r:System.Data.dll",
     "/r:System.Drawing.dll",
+    "/r:System.Web.Extensions.dll",
     "/r:System.Windows.Forms.dll",
     "/r:$root\System.Data.SQLite.DLL"
 )
