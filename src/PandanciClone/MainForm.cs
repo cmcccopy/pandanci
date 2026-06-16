@@ -360,10 +360,10 @@ namespace PandanciClone
                 {
                     int width = _settings.PopupSize.Width;
                     int height = _settings.PopupSize.Height;
-                    if (width >= 430 && height >= 540)
+                    if (width >= 390 && height >= 500)
                     {
-                        width = 390;
-                        height = 510;
+                        width = 370;
+                        height = 480;
                     }
                     width = Math.Max(_translationPopup.MinimumSize.Width, width);
                     height = Math.Max(_translationPopup.MinimumSize.Height, height);
@@ -1608,18 +1608,43 @@ namespace PandanciClone
 
         private void AddWordCardAt(Point p, string word)
         {
-            if (string.IsNullOrWhiteSpace(word)) return;
-            WordCard c = new WordCard();
-            c.Word = word.Trim();
-            c.X = p.X;
-            c.Y = p.Y;
-            c.Width = Math.Max(50, TextRenderer.MeasureText(c.Word, Font).Width + 20);
-            c.Height = 28;
-            _cards.Add(c);
-            SelectItem(c, null);
+            AddOrMoveWordCardAt(p, word);
+        }
+
+        private WordCard AddOrMoveWordCardAt(Point p, string word)
+        {
+            string clean = NormalizeStoredWord(word);
+            if (string.IsNullOrWhiteSpace(clean)) return null;
+
+            Size size = MeasureWordCardSize(clean);
+            WordCard existing = FindWordCard(clean);
+            Point location = FindAvailableWordLocation(p, size, existing);
+
+            if (existing != null)
+            {
+                existing.Word = clean;
+                existing.Width = size.Width;
+                existing.Height = size.Height;
+                MoveCard(existing, location.X, location.Y);
+                SelectItem(existing, null);
+            }
+            else
+            {
+                WordCard c = new WordCard();
+                c.Word = clean;
+                c.X = location.X;
+                c.Y = location.Y;
+                c.Width = size.Width;
+                c.Height = size.Height;
+                _cards.Add(c);
+                existing = c;
+                SelectItem(c, null);
+            }
+
             UpdateCanvasSize();
             UpdateStats();
             RefreshMapViews();
+            return existing;
         }
 
         private void OnPopupSaveWordRequested(object sender, EventArgs e)
@@ -1628,20 +1653,81 @@ namespace PandanciClone
             string word = NormalizePopupWord(_translationPopup.SourceText);
             if (string.IsNullOrWhiteSpace(word)) return;
 
-            Point target = _lastMapMousePoint == Point.Empty ? new Point(80, 80) : _lastMapMousePoint;
-            AddWordCardAt(target, word);
+            WordCard card = AddOrMoveWordCardAt(GetPopupSaveTarget(), word);
+            if (card != null) ScrollTo(card.X, card.Y);
             SaveCurrentFile();
+        }
+
+        private Point GetPopupSaveTarget()
+        {
+            if (_lastMapMousePoint != Point.Empty) return _lastMapMousePoint;
+            if (_map != null)
+            {
+                return new Point(
+                    -_map.AutoScrollPosition.X - _map.OriginOffset.X + Math.Max(0, _map.ClientSize.Width / 2),
+                    -_map.AutoScrollPosition.Y - _map.OriginOffset.Y + Math.Max(0, _map.ClientSize.Height / 2));
+            }
+            return new Point(80, 80);
+        }
+
+        private WordCard FindWordCard(string word)
+        {
+            foreach (WordCard c in _cards)
+            {
+                if (string.Equals(c.Word, word, StringComparison.OrdinalIgnoreCase)) return c;
+            }
+            return null;
+        }
+
+        private Size MeasureWordCardSize(string word)
+        {
+            return new Size(Math.Max(50, TextRenderer.MeasureText(word, Font).Width + 20), 28);
+        }
+
+        private Point FindAvailableWordLocation(Point desired, Size size, WordCard ignore)
+        {
+            const int gap = 8;
+            int stepX = Math.Max(70, size.Width + gap);
+            int stepY = Math.Max(36, size.Height + gap);
+            for (int row = 0; row < 40; row++)
+            {
+                for (int col = 0; col < 10; col++)
+                {
+                    Point candidate = new Point(desired.X + col * stepX, desired.Y + row * stepY);
+                    Rectangle bounds = new Rectangle(candidate, size);
+                    if (!OverlapsWordCard(bounds, ignore, gap)) return candidate;
+                }
+            }
+            return desired;
+        }
+
+        private bool OverlapsWordCard(Rectangle bounds, WordCard ignore, int gap)
+        {
+            Rectangle padded = bounds;
+            padded.Inflate(gap, gap);
+            foreach (WordCard c in _cards)
+            {
+                if (c == ignore) continue;
+                Rectangle other = new Rectangle(c.X, c.Y, c.Width, c.Height);
+                other.Inflate(gap, gap);
+                if (padded.IntersectsWith(other)) return true;
+            }
+            return false;
         }
 
         private static string NormalizePopupWord(string text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return "";
-            string value = text.Trim();
-            char[] trimChars = new char[] { ' ', '\t', '\r', '\n', '.', ',', ';', ':', '!', '?', '"', '\'', '(', ')', '[', ']', '{', '}' };
-            value = value.Trim(trimChars);
-            return value.Length > 80 ? value.Substring(0, 80) : value;
+            return NormalizeStoredWord(text);
         }
 
+        private static string NormalizeStoredWord(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+            string value = text.Trim();
+            char[] trimChars = " \t\r\n.,;:!?\"'()[]{}".ToCharArray();
+            value = value.Trim(trimChars).ToLowerInvariant();
+            return value.Length > 80 ? value.Substring(0, 80) : value;
+        }
         private void AddNoteAt(Point p)
         {
             string text = Prompt.Show("笔记", "添加笔记");
@@ -2415,6 +2501,10 @@ namespace PandanciClone
         }
     }
 }
+
+
+
+
 
 
 

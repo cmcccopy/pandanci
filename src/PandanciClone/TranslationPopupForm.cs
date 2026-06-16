@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -8,6 +8,16 @@ namespace PandanciClone
     internal sealed class TranslationPopupForm : Form
     {
         private const int WsExToolWindow = 0x00000080;
+        private const int WmNcHitTest = 0x0084;
+        private const int HtLeft = 10;
+        private const int HtRight = 11;
+        private const int HtTop = 12;
+        private const int HtTopLeft = 13;
+        private const int HtTopRight = 14;
+        private const int HtBottom = 15;
+        private const int HtBottomLeft = 16;
+        private const int HtBottomRight = 17;
+        private const int ResizeBorder = 8;
         private const int VkLButton = 0x01;
         private const int VkRButton = 0x02;
         private const int VkMButton = 0x04;
@@ -66,9 +76,9 @@ namespace PandanciClone
         public TranslationPopupForm()
         {
             Text = "划词翻译";
-            Width = 390;
-            Height = 510;
-            MinimumSize = new Size(360, 430);
+            Width = 370;
+            Height = 480;
+            MinimumSize = new Size(340, 400);
             FormBorderStyle = FormBorderStyle.None;
             BackColor = Color.FromArgb(248, 249, 252);
             MaximizeBox = false;
@@ -76,7 +86,7 @@ namespace PandanciClone
             ShowInTaskbar = false;
             TopMost = true;
             StartPosition = FormStartPosition.Manual;
-            Font = new Font("Microsoft YaHei UI", 9F);
+            Font = new Font("Microsoft YaHei UI", 8.5F);
 
             _toolTip = new ToolTip();
             _toolTip.AutoPopDelay = 8000;
@@ -87,7 +97,7 @@ namespace PandanciClone
             _titleLabel.AutoSize = false;
             _titleLabel.Text = "划词翻译";
             _titleLabel.TextAlign = ContentAlignment.MiddleLeft;
-            _titleLabel.Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold);
+            _titleLabel.Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Bold);
             _titleLabel.ForeColor = Color.FromArgb(35, 35, 35);
             Controls.Add(_titleLabel);
 
@@ -116,7 +126,7 @@ namespace PandanciClone
             _sourceBox.BorderStyle = BorderStyle.None;
             _sourceBox.BackColor = _inputCard.BackColor;
             _sourceBox.Multiline = true;
-            _sourceBox.Font = new Font("Microsoft YaHei UI", 14.5F);
+            _sourceBox.Font = new Font("Microsoft YaHei UI", 12.5F);
             _sourceBox.KeyDown += OnSourceBoxKeyDown;
             _sourceBox.TextChanged += OnSourceBoxTextChanged;
             _inputCard.Controls.Add(_sourceBox);
@@ -168,7 +178,7 @@ namespace PandanciClone
             _sourceLangPill = new Label();
             _sourceLangPill.AutoSize = false;
             _sourceLangPill.TextAlign = ContentAlignment.MiddleCenter;
-            _sourceLangPill.Font = new Font("Microsoft YaHei UI", 9.5F);
+            _sourceLangPill.Font = new Font("Microsoft YaHei UI", 8.5F);
             _sourceLangPill.BackColor = Color.FromArgb(244, 247, 252);
             _inputCard.Controls.Add(_sourceLangPill);
 
@@ -177,7 +187,7 @@ namespace PandanciClone
             _translateButton.FlatAppearance.BorderSize = 0;
             _translateButton.BackColor = Color.FromArgb(72, 120, 232);
             _translateButton.ForeColor = Color.White;
-            _translateButton.Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold);
+            _translateButton.Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Bold);
             _translateButton.Text = "翻译";
             _translateButton.Click += delegate { RaiseTranslateTextRequested(); };
             _inputCard.Controls.Add(_translateButton);
@@ -206,7 +216,7 @@ namespace PandanciClone
 
             _statusLabel = new Label();
             _statusLabel.AutoEllipsis = true;
-            _statusLabel.Font = new Font("Microsoft YaHei UI", 8.5F);
+            _statusLabel.Font = new Font("Microsoft YaHei UI", 8F);
             _statusLabel.ForeColor = Color.FromArgb(100, 100, 100);
             _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
             Controls.Add(_statusLabel);
@@ -231,7 +241,7 @@ namespace PandanciClone
             _resizeGrip.AutoSize = false;
             _resizeGrip.Text = "◢";
             _resizeGrip.TextAlign = ContentAlignment.MiddleCenter;
-            _resizeGrip.ForeColor = Color.FromArgb(130, 130, 130);
+            _resizeGrip.ForeColor = Color.FromArgb(105, 112, 125);
             _resizeGrip.Cursor = Cursors.SizeNWSE;
             _resizeGrip.MouseDown += OnResizeGripMouseDown;
             _resizeGrip.MouseMove += OnResizeGripMouseMove;
@@ -303,6 +313,31 @@ namespace PandanciClone
             }
         }
 
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WmNcHitTest)
+            {
+                base.WndProc(ref m);
+                if ((int)m.Result != 1) return;
+
+                Point p = PointToClient(Cursor.Position);
+                bool left = p.X <= ResizeBorder;
+                bool right = p.X >= ClientSize.Width - ResizeBorder;
+                bool top = p.Y <= ResizeBorder;
+                bool bottom = p.Y >= ClientSize.Height - ResizeBorder;
+
+                if (left && top) m.Result = (IntPtr)HtTopLeft;
+                else if (right && top) m.Result = (IntPtr)HtTopRight;
+                else if (left && bottom) m.Result = (IntPtr)HtBottomLeft;
+                else if (right && bottom) m.Result = (IntPtr)HtBottomRight;
+                else if (left) m.Result = (IntPtr)HtLeft;
+                else if (right) m.Result = (IntPtr)HtRight;
+                else if (top) m.Result = (IntPtr)HtTop;
+                else if (bottom) m.Result = (IntPtr)HtBottom;
+                return;
+            }
+            base.WndProc(ref m);
+        }
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
@@ -871,7 +906,7 @@ namespace PandanciClone
             ui.TextBox.Multiline = true;
             ui.TextBox.ReadOnly = true;
             ui.TextBox.ScrollBars = ScrollBars.Vertical;
-            ui.TextBox.Font = new Font("Microsoft YaHei UI", 12F);
+            ui.TextBox.Font = new Font("Microsoft YaHei UI", 10.5F);
             ui.TextBox.ForeColor = Color.FromArgb(35, 35, 35);
             ui.TextBox.TabStop = false;
             ui.Card.Controls.Add(ui.TextBox);
@@ -886,7 +921,7 @@ namespace PandanciClone
             button.FlatAppearance.BorderSize = 0;
             button.BackColor = Color.FromArgb(248, 249, 252);
             button.ForeColor = Color.FromArgb(82, 88, 98);
-            button.Font = new Font("Microsoft YaHei UI", 10.5F);
+            button.Font = new Font("Microsoft YaHei UI", 9F);
             return button;
         }
 
@@ -915,7 +950,7 @@ namespace PandanciClone
             Label label = new Label();
             label.AutoSize = false;
             label.TextAlign = alignment;
-            label.Font = new Font("Microsoft YaHei UI", 10.5F);
+            label.Font = new Font("Microsoft YaHei UI", 9.5F);
             label.ForeColor = Color.FromArgb(45, 52, 64);
             return label;
         }
@@ -1007,3 +1042,6 @@ namespace PandanciClone
         }
     }
 }
+
+
+
