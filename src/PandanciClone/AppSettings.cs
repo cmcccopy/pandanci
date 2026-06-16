@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
@@ -13,6 +13,9 @@ namespace PandanciClone
         public string GoogleProxyAddress = "";
         public string TesseractPath = "";
         public string OcrLanguage = "eng+chi_sim";
+        public string LanSyncHost = "";
+        public int LanSyncPort = 17890;
+        public string SyncDeviceId = Guid.NewGuid().ToString("N");
         public bool HasPopupLocation;
         public Point PopupLocation;
         public bool HasPopupSize;
@@ -47,6 +50,19 @@ namespace PandanciClone
                 else if (string.Equals(key, "OcrLanguage", StringComparison.OrdinalIgnoreCase))
                 {
                     settings.OcrLanguage = string.IsNullOrWhiteSpace(value) ? "eng+chi_sim" : value;
+                }
+                else if (string.Equals(key, "LanSyncHost", StringComparison.OrdinalIgnoreCase))
+                {
+                    settings.LanSyncHost = value;
+                }
+                else if (string.Equals(key, "LanSyncPort", StringComparison.OrdinalIgnoreCase))
+                {
+                    int port;
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out port) && port > 0 && port <= 65535) settings.LanSyncPort = port;
+                }
+                else if (string.Equals(key, "SyncDeviceId", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!string.IsNullOrWhiteSpace(value)) settings.SyncDeviceId = value;
                 }
                 else if (string.Equals(key, "PopupX", StringComparison.OrdinalIgnoreCase))
                 {
@@ -94,6 +110,9 @@ namespace PandanciClone
             text.Append("GoogleProxyAddress=").AppendLine(GoogleProxyAddress ?? "");
             text.Append("TesseractPath=").AppendLine(TesseractPath ?? "");
             text.Append("OcrLanguage=").AppendLine(string.IsNullOrWhiteSpace(OcrLanguage) ? "eng+chi_sim" : OcrLanguage);
+            text.Append("LanSyncHost=").AppendLine(LanSyncHost ?? "");
+            text.Append("LanSyncPort=").AppendLine(LanSyncPort.ToString(CultureInfo.InvariantCulture));
+            text.Append("SyncDeviceId=").AppendLine(string.IsNullOrWhiteSpace(SyncDeviceId) ? Guid.NewGuid().ToString("N") : SyncDeviceId);
             if (HasPopupLocation)
             {
                 text.Append("PopupX=").AppendLine(PopupLocation.X.ToString(CultureInfo.InvariantCulture));
@@ -108,3 +127,4 @@ namespace PandanciClone
         }
     }
 }
+
