@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -16,63 +16,68 @@ namespace PandanciClone
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetClipboardSequenceNumber();
+
         [DllImport("user32.dll", SetLastError = true)]
         private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
         public string CaptureSelectedText()
         {
-            IDataObject backup = null;
-            bool hadClipboard = false;
-            try
+            if (!WaitForHotkeyRelease()) throw new InvalidOperationException("请先松开 Alt+A 后再取词。");
+
+            IntPtr targetWindow = GetForegroundWindow();
+            string oldText = "";
+            bool hadTextClipboard = TryReadClipboardText(out oldText);
+            uint sequenceBefore = GetClipboardSequenceNumber();
+
+            if (targetWindow != IntPtr.Zero)
             {
-                hadClipboard = Clipboard.ContainsData(DataFormats.Text) || Clipboard.ContainsImage() || Clipboard.ContainsFileDropList();
-                if (hadClipboard) backup = Clipboard.GetDataObject();
-            }
-            catch (ExternalException)
-            {
-                backup = null;
-                hadClipboard = false;
+                SetForegroundWindow(targetWindow);
+                Thread.Sleep(60);
             }
 
-            try
+            SendCopyShortcut();
+            string captured = WaitForCopiedText(sequenceBefore);
+
+            if (hadTextClipboard)
             {
-                WaitForHotkeyRelease();
-                TryClearClipboard();
-                SendCopyShortcut();
-                string captured = WaitForText();
-                return CleanText(captured);
+                TryRestoreClipboardText(oldText);
             }
-            finally
-            {
-                if (hadClipboard && backup != null)
-                {
-                    TryRestoreClipboard(backup);
-                }
-            }
+
+            return CleanText(captured);
         }
 
-        private static string WaitForText()
+        private static string WaitForCopiedText(uint sequenceBefore)
         {
-            for (int i = 0; i < 30; i++)
+            for (int i = 0; i < 20; i++)
             {
                 Thread.Sleep(50);
-                string current = TryGetClipboardText();
-                if (!string.IsNullOrWhiteSpace(current)) return current;
+                if (GetClipboardSequenceNumber() == sequenceBefore) continue;
+
+                string current;
+                if (TryReadClipboardText(out current) && !string.IsNullOrWhiteSpace(current)) return current;
             }
 
-            string fallback = TryGetClipboardText();
-            return string.IsNullOrWhiteSpace(fallback) ? "" : fallback;
+            return "";
         }
 
-        private static void WaitForHotkeyRelease()
+        private static bool WaitForHotkeyRelease()
         {
-            for (int i = 0; i < 40; i++)
+            for (int i = 0; i < 80; i++)
             {
                 bool altDown = IsKeyDown(VkMenu);
                 bool aDown = IsKeyDown(VkA);
-                if (!altDown && !aDown) return;
+                if (!altDown && !aDown) return true;
                 Thread.Sleep(25);
             }
+            return false;
         }
 
         private static bool IsKeyDown(int key)
@@ -91,36 +96,28 @@ namespace PandanciClone
             keybd_event(VkControl, 0, KeyeventfKeyup, UIntPtr.Zero);
         }
 
-        private static void TryClearClipboard()
+        private static bool TryReadClipboardText(out string text)
         {
+            text = "";
             try
             {
-                Clipboard.Clear();
+                if (!Clipboard.ContainsText(TextDataFormat.UnicodeText)) return false;
+                text = Clipboard.GetText(TextDataFormat.UnicodeText);
+                return true;
             }
             catch (ExternalException)
             {
+                return false;
             }
         }
 
-        private static string TryGetClipboardText()
-        {
-            try
-            {
-                return Clipboard.ContainsText() ? Clipboard.GetText() : "";
-            }
-            catch (ExternalException)
-            {
-                return "";
-            }
-        }
-
-        private static void TryRestoreClipboard(IDataObject data)
+        private static void TryRestoreClipboardText(string text)
         {
             for (int i = 0; i < 3; i++)
             {
                 try
                 {
-                    Clipboard.SetDataObject(data, true);
+                    Clipboard.SetText(text ?? "", TextDataFormat.UnicodeText);
                     return;
                 }
                 catch (ExternalException)

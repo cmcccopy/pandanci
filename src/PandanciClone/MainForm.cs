@@ -1007,7 +1007,6 @@ namespace PandanciClone
         private void TranslateSelectedTextByHotkey()
         {
             int requestId = Interlocked.Increment(ref _translationRequestId);
-            EnsureTranslationPopup().ShowReading();
 
             Thread captureThread = new Thread(new ThreadStart(delegate
             {
@@ -2848,6 +2847,7 @@ namespace PandanciClone
         }
     }
 }
+
 
 
 

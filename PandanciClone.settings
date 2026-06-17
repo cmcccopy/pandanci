@@ -1,7 +1,10 @@
 ﻿GoogleProxyAddress=127.0.0.1:10801
 TesseractPath=./tesseract
 OcrLanguage=eng+chi_sim
-PopupX=600
-PopupY=80
+LanSyncHost=172.16.48.65
+LanSyncPort=17890
+SyncDeviceId=2740b9ba37b046a0b30649fa7fa5c2d8
+PopupX=956
+PopupY=91
 PopupWidth=368
 PopupHeight=576
