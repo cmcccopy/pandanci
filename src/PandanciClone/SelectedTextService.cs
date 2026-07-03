@@ -12,6 +12,7 @@ namespace PandanciClone
         private const byte VkA = 0x41;
         private const byte VkMenu = 0x12;
         private const uint KeyeventfKeyup = 0x0002;
+        private const int MaxCapturedTextLength = 12000;
 
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
@@ -132,7 +133,8 @@ namespace PandanciClone
             if (string.IsNullOrWhiteSpace(text)) return "";
             string value = text.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ").Trim();
             while (value.IndexOf("  ", StringComparison.Ordinal) >= 0) value = value.Replace("  ", " ");
-            return value.Length > 800 ? value.Substring(0, 800) : value;
+            return value.Length > MaxCapturedTextLength ? value.Substring(0, MaxCapturedTextLength) : value;
         }
     }
 }
+

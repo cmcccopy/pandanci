@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -49,6 +50,8 @@ namespace PandanciClone
         private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer();
         private TranslationProvider _provider = TranslationProvider.Google;
         private string _googleProxyAddress = "";
+        private const int MaxGoogleSegmentLength = 1200;
+        private const int MaxBingSegmentLength = 4000;
 
         public TranslationProvider Provider
         {
@@ -98,6 +101,15 @@ namespace PandanciClone
 
         private TranslationResult TranslateWithGoogle(string text, TranslationTarget target)
         {
+            if (!string.IsNullOrEmpty(text) && text.Length > MaxGoogleSegmentLength)
+            {
+                return TranslateLongText(text, target, TranslationProvider.Google, MaxGoogleSegmentLength);
+            }
+            return TranslateWithGoogleSingle(text, target);
+        }
+
+        private TranslationResult TranslateWithGoogleSingle(string text, TranslationTarget target)
+        {
             string url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" + Uri.EscapeDataString(target.GoogleCode) + "&dt=t&q=" + Uri.EscapeDataString(text);
             string json = DownloadString(url, "GET", null, null, null, CreateGoogleProxy());
             object[] root = _serializer.DeserializeObject(json) as object[];
@@ -127,6 +139,15 @@ namespace PandanciClone
         }
 
         private TranslationResult TranslateWithBing(string text, TranslationTarget target)
+        {
+            if (!string.IsNullOrEmpty(text) && text.Length > MaxBingSegmentLength)
+            {
+                return TranslateLongText(text, target, TranslationProvider.Bing, MaxBingSegmentLength);
+            }
+            return TranslateWithBingSingle(text, target);
+        }
+
+        private TranslationResult TranslateWithBingSingle(string text, TranslationTarget target)
         {
             TranslationResult edgeResult = TryTranslateWithBingEdge(text, target);
             if (string.IsNullOrWhiteSpace(edgeResult.Error)) return edgeResult;
@@ -172,6 +193,94 @@ namespace PandanciClone
             }
         }
 
+        private TranslationResult TranslateLongText(string text, TranslationTarget target, TranslationProvider provider, int maxSegmentLength)
+        {
+            List<string> parts = SplitTextForTranslation(text, maxSegmentLength);
+            TranslationResult result = new TranslationResult();
+            result.SourceText = text;
+            result.Provider = provider.ToString();
+            result.TargetLanguage = provider == TranslationProvider.Bing ? target.BingCode : target.GoogleCode;
+            result.DirectionText = target.DirectionText;
+
+            StringBuilder translated = new StringBuilder();
+            for (int i = 0; i < parts.Count; i++)
+            {
+                string part = parts[i];
+                TranslationResult partResult = provider == TranslationProvider.Bing
+                    ? TranslateWithBingSingle(part, target)
+                    : TranslateWithGoogleSingle(part, target);
+
+                if (!string.IsNullOrWhiteSpace(partResult.Error))
+                {
+            if (string.IsNullOrWhiteSpace(result.TranslatedText)) result.Error = provider + " 返回了空结果。";
+                    return result;
+                }
+
+                string partText = partResult.TranslatedText == null ? "" : partResult.TranslatedText.Trim();
+                if (partText.Length == 0) continue;
+                if (translated.Length > 0) translated.AppendLine();
+                translated.Append(partText);
+
+                if (string.IsNullOrWhiteSpace(result.DetectedLanguage) && !string.IsNullOrWhiteSpace(partResult.DetectedLanguage))
+                {
+                    result.DetectedLanguage = partResult.DetectedLanguage;
+                }
+            }
+
+            result.TranslatedText = translated.ToString();
+            if (string.IsNullOrWhiteSpace(result.TranslatedText)) result.Error = provider + " 返回了空结果。";
+            return result;
+        }
+
+        private static List<string> SplitTextForTranslation(string text, int maxLength)
+        {
+            List<string> parts = new List<string>();
+            if (string.IsNullOrWhiteSpace(text)) return parts;
+
+            int start = 0;
+            while (start < text.Length)
+            {
+                while (start < text.Length && char.IsWhiteSpace(text[start])) start++;
+                if (start >= text.Length) break;
+
+                int end = Math.Min(text.Length, start + maxLength);
+                if (end < text.Length)
+                {
+                    end = FindSplitPosition(text, start, end);
+                }
+
+                if (end <= start) end = Math.Min(text.Length, start + maxLength);
+                string part = text.Substring(start, end - start).Trim();
+                if (part.Length > 0) parts.Add(part);
+                start = end;
+            }
+
+            return parts;
+        }
+
+        private static int FindSplitPosition(string text, int start, int end)
+        {
+            int min = start + Math.Min(200, Math.Max(1, (end - start) / 3));
+
+            for (int i = end - 1; i > min; i--)
+            {
+                char c = text[i];
+                if (c == '\r' || c == '\n') return i + 1;
+            }
+
+            for (int i = end - 1; i > min; i--)
+            {
+                char c = text[i];
+                if (c == '.' || c == '!' || c == '?' || c == ';' || c == ':' || c == '。' || c == '！' || c == '？' || c == '；') return i + 1;
+            }
+
+            for (int i = end - 1; i > min; i--)
+            {
+                if (char.IsWhiteSpace(text[i])) return i + 1;
+            }
+
+            return end;
+        }
         private TranslationResult ParseMicrosoftTranslationJson(string json, string text, string provider, TranslationTarget target)
         {
             object[] root = _serializer.DeserializeObject(json) as object[];
@@ -359,3 +468,8 @@ namespace PandanciClone
         }
     }
 }
+
+
+
+
+
