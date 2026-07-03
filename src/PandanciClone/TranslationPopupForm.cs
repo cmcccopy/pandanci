@@ -126,9 +126,12 @@ namespace PandanciClone
             _sourceBox.BorderStyle = BorderStyle.None;
             _sourceBox.BackColor = _inputCard.BackColor;
             _sourceBox.Multiline = true;
+            _sourceBox.ScrollBars = ScrollBars.Vertical;
+            _sourceBox.WordWrap = true;
             _sourceBox.Font = new Font("Microsoft YaHei UI", 12.5F);
             _sourceBox.KeyDown += OnSourceBoxKeyDown;
             _sourceBox.TextChanged += OnSourceBoxTextChanged;
+            _sourceBox.MouseEnter += delegate { if (!_sourceBox.Focused) _sourceBox.Focus(); };
             _inputCard.Controls.Add(_sourceBox);
 
             _speakSourceButton = MakeCardButton("🔊");
@@ -1042,6 +1045,7 @@ namespace PandanciClone
         }
     }
 }
+
 
 
 
