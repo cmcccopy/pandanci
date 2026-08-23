@@ -69,6 +69,7 @@ namespace PandanciClone
         public event EventHandler SaveWordRequested;
         public event EventHandler PopupLocationChanged;
         public event EventHandler TranslateTextRequested;
+        public event EventHandler Dismissed;
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
@@ -116,7 +117,7 @@ namespace PandanciClone
 
             _closeButton = MakeIconButton("×");
             _closeButton.Font = new Font("Microsoft YaHei UI", 13F, FontStyle.Bold);
-            _closeButton.Click += delegate { Hide(); };
+            _closeButton.Click += delegate { DismissPopup(); };
             Controls.Add(_closeButton);
 
             _inputCard = new RoundedPanel { BackColor = Color.White, Radius = 14 };
@@ -359,7 +360,7 @@ namespace PandanciClone
             if (e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true;
-                Hide();
+                DismissPopup();
                 return;
             }
             base.OnFormClosing(e);
@@ -460,7 +461,7 @@ namespace PandanciClone
 
         public void ShowProviderResult(TranslationResult result)
         {
-            if (result == null) return;
+            if (result == null || !Visible) return;
             if (!string.IsNullOrWhiteSpace(result.SourceText)) SetSourceText(result.SourceText);
 
             string text = string.IsNullOrWhiteSpace(result.Error) ? result.TranslatedText : result.Error;
@@ -472,7 +473,14 @@ namespace PandanciClone
             UpdateResults();
             _statusLabel.Text = (string.IsNullOrWhiteSpace(result.DirectionText) ? TranslationService.DetectTarget(_sourceText, GetLanguageMode()).DirectionText : result.DirectionText) + " · Google + Bing";
             UpdateButtons();
-            ShowPopup(true);
+        }
+
+        private void DismissPopup()
+        {
+            _editDebounceTimer.Stop();
+            Hide();
+            EventHandler handler = Dismissed;
+            if (handler != null) handler(this, EventArgs.Empty);
         }
 
         private void LayoutControls()
@@ -826,7 +834,7 @@ namespace PandanciClone
             bool mouseDown = IsAnyMouseButtonDown();
             if (Visible && !_pinned && mouseDown && !_lastMouseDown && !Bounds.Contains(Cursor.Position))
             {
-                Hide();
+                DismissPopup();
             }
             _lastMouseDown = mouseDown;
         }

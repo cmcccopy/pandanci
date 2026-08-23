@@ -31,6 +31,8 @@ namespace PandanciClone
         private readonly SelectedTextService _selectedText;
         private readonly TranslationService _translation;
         private readonly AppSettings _settings;
+        private readonly SemaphoreSlim _googleTranslationGate = new SemaphoreSlim(1, 1);
+        private readonly object _googleTranslationCancellationLock = new object();
 
         private string _currentFile;
         private MapPanel _map;
@@ -47,6 +49,7 @@ namespace PandanciClone
         private bool _hotkeyRegistered;
         private bool _screenshotHotkeyRegistered;
         private int _translationRequestId;
+        private CancellationTokenSource _googleTranslationCancellation;
 
         private WordCard _selectedCard;
         private TextNote _selectedNote;
@@ -386,8 +389,15 @@ namespace PandanciClone
                 _translationPopup.SaveWordRequested += OnPopupSaveWordRequested;
                 _translationPopup.PopupLocationChanged += OnPopupLocationChanged;
                 _translationPopup.TranslateTextRequested += OnPopupTranslateTextRequested;
+                _translationPopup.Dismissed += OnTranslationPopupDismissed;
             }
             return _translationPopup;
+        }
+
+        private void OnTranslationPopupDismissed(object sender, EventArgs e)
+        {
+            Interlocked.Increment(ref _translationRequestId);
+            CancelGoogleTranslation();
         }
 
         private void OnSetTranslationProxy(object sender, EventArgs e)
@@ -996,6 +1006,7 @@ namespace PandanciClone
                 _notifyIcon.Dispose();
                 _notifyIcon = null;
             }
+            CancelGoogleTranslation();
             if (_translationPopup != null)
             {
                 _translationPopup.Dispose();
@@ -1007,6 +1018,7 @@ namespace PandanciClone
         private void TranslateSelectedTextByHotkey()
         {
             int requestId = Interlocked.Increment(ref _translationRequestId);
+            CancelGoogleTranslation();
 
             Thread captureThread = new Thread(new ThreadStart(delegate
             {
@@ -1051,6 +1063,7 @@ namespace PandanciClone
         private void TranslateScreenshotByHotkey()
         {
             int requestId = Interlocked.Increment(ref _translationRequestId);
+            CancelGoogleTranslation();
             Bitmap selectedBitmap = null;
             try
             {
@@ -1141,24 +1154,111 @@ namespace PandanciClone
 
         private void StartProviderTranslation(int requestId, string text, TranslationProvider provider, TranslationLanguageMode languageMode)
         {
-            string googleProxyAddress = _settings.GoogleProxyAddress;
+            if (provider == TranslationProvider.Google)
+            {
+                StartGoogleTranslation(requestId, text, languageMode);
+                return;
+            }
+
             ThreadPool.QueueUserWorkItem(delegate
             {
                 TranslationService service = new TranslationService();
-                service.GoogleProxyAddress = googleProxyAddress;
                 TranslationResult result = service.Translate(text, provider, languageMode);
+                BeginShowProviderResult(requestId, result);
+            });
+        }
+
+        private void StartGoogleTranslation(int requestId, string text, TranslationLanguageMode languageMode)
+        {
+            string googleProxyAddress = _settings.GoogleProxyAddress;
+            CancellationTokenSource cancellation = BeginGoogleTranslation();
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                bool enteredGate = false;
                 try
                 {
-                    BeginInvoke(new MethodInvoker(delegate
-                    {
-                        if (requestId != _translationRequestId) return;
-                        EnsureTranslationPopup().ShowProviderResult(result);
-                    }));
+                    _googleTranslationGate.Wait(cancellation.Token);
+                    enteredGate = true;
+
+                    TranslationService service = new TranslationService();
+                    service.GoogleProxyAddress = googleProxyAddress;
+                    TranslationResult result = service.Translate(text, TranslationProvider.Google, languageMode, cancellation.Token);
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    BeginShowProviderResult(requestId, result);
                 }
-                catch (InvalidOperationException)
+                catch (OperationCanceledException)
                 {
                 }
+                finally
+                {
+                    if (enteredGate) _googleTranslationGate.Release();
+                    CompleteGoogleTranslation(cancellation);
+                }
             });
+        }
+
+        private CancellationTokenSource BeginGoogleTranslation()
+        {
+            CancellationTokenSource previous;
+            CancellationTokenSource current = new CancellationTokenSource();
+            lock (_googleTranslationCancellationLock)
+            {
+                previous = _googleTranslationCancellation;
+                _googleTranslationCancellation = current;
+            }
+            TryCancelGoogleTranslation(previous);
+            return current;
+        }
+
+        private void CancelGoogleTranslation()
+        {
+            CancellationTokenSource cancellation;
+            lock (_googleTranslationCancellationLock)
+            {
+                cancellation = _googleTranslationCancellation;
+                _googleTranslationCancellation = null;
+            }
+            TryCancelGoogleTranslation(cancellation);
+        }
+
+        private static void TryCancelGoogleTranslation(CancellationTokenSource cancellation)
+        {
+            if (cancellation == null) return;
+            try
+            {
+                cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+        private void CompleteGoogleTranslation(CancellationTokenSource cancellation)
+        {
+            lock (_googleTranslationCancellationLock)
+            {
+                if (ReferenceEquals(_googleTranslationCancellation, cancellation))
+                {
+                    _googleTranslationCancellation = null;
+                }
+            }
+            cancellation.Dispose();
+        }
+
+        private void BeginShowProviderResult(int requestId, TranslationResult result)
+        {
+            try
+            {
+                BeginInvoke(new MethodInvoker(delegate
+                {
+                    if (requestId != _translationRequestId) return;
+                    TranslationPopupForm popup = _translationPopup;
+                    if (popup == null || popup.IsDisposed || !popup.Visible) return;
+                    popup.ShowProviderResult(result);
+                }));
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
 
         private void BeginShowTranslationError(int requestId, string message)

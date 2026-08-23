@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Web.Script.Serialization;
 
 namespace PandanciClone
@@ -52,6 +54,11 @@ namespace PandanciClone
         private string _googleProxyAddress = "";
         private const int MaxGoogleSegmentLength = 1200;
         private const int MaxBingSegmentLength = 4000;
+        private const int MaxCacheEntries = 256;
+        private static readonly int[] GoogleRetryDelays = new int[] { 1000, 2000, 4000, 8000 };
+        private static readonly object CacheLock = new object();
+        private static readonly Dictionary<string, TranslationResult> TranslationCache = new Dictionary<string, TranslationResult>(StringComparer.Ordinal);
+        private static readonly Queue<string> CacheOrder = new Queue<string>();
 
         public TranslationProvider Provider
         {
@@ -77,6 +84,11 @@ namespace PandanciClone
 
         public TranslationResult Translate(string text, TranslationProvider provider, TranslationLanguageMode languageMode)
         {
+            return Translate(text, provider, languageMode, CancellationToken.None);
+        }
+
+        public TranslationResult Translate(string text, TranslationProvider provider, TranslationLanguageMode languageMode, CancellationToken cancellationToken)
+        {
             TranslationResult result = new TranslationResult();
             result.SourceText = text ?? "";
             result.Provider = provider.ToString();
@@ -88,9 +100,23 @@ namespace PandanciClone
 
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
                 TranslationTarget target = DetectTarget(text, languageMode);
-                return provider == TranslationProvider.Bing ? TranslateWithBing(text, target) : TranslateWithGoogle(text, target);
+                string cacheKey = BuildCacheKey(provider, target, text);
+                TranslationResult cached;
+                if (TryGetCachedResult(cacheKey, out cached)) return cached;
+
+                result = provider == TranslationProvider.Bing
+                    ? TranslateWithBing(text, target)
+                    : TranslateWithGoogle(text, target, cancellationToken);
+
+                if (string.IsNullOrWhiteSpace(result.Error)) StoreCachedResult(cacheKey, result);
+                return result;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -99,19 +125,89 @@ namespace PandanciClone
             }
         }
 
-        private TranslationResult TranslateWithGoogle(string text, TranslationTarget target)
+        private TranslationResult TranslateWithGoogle(string text, TranslationTarget target, CancellationToken cancellationToken)
         {
             if (!string.IsNullOrEmpty(text) && text.Length > MaxGoogleSegmentLength)
             {
-                return TranslateLongText(text, target, TranslationProvider.Google, MaxGoogleSegmentLength);
+                return TranslateLongText(text, target, TranslationProvider.Google, MaxGoogleSegmentLength, cancellationToken);
             }
-            return TranslateWithGoogleSingle(text, target);
+            return TranslateWithGoogleSingle(text, target, cancellationToken);
         }
 
-        private TranslationResult TranslateWithGoogleSingle(string text, TranslationTarget target)
+        private TranslationResult TranslateWithGoogleSingle(string text, TranslationTarget target, CancellationToken cancellationToken)
         {
-            string url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" + Uri.EscapeDataString(target.GoogleCode) + "&dt=t&q=" + Uri.EscapeDataString(text);
-            string json = DownloadString(url, "GET", null, null, null, CreateGoogleProxy());
+            for (int attempt = 0; ; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    return TranslateWithGoogleSingleCore(text, target, cancellationToken);
+                }
+                catch (WebException ex)
+                {
+                    if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
+                    if (!IsTooManyRequests(ex)) throw;
+
+                    Exception mobileError = null;
+                    try
+                    {
+                        return TranslateWithGoogleMobile(text, target, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception fallbackException)
+                    {
+                        mobileError = fallbackException;
+                    }
+
+                    if (attempt >= GoogleRetryDelays.Length)
+                    {
+                        string detail = mobileError == null ? "" : " Mobile 备用接口错误：" + mobileError.Message;
+                        throw new InvalidOperationException("Google JSON 接口持续返回 429，Mobile 备用接口也不可用。已按 1、2、4、8 秒退避重试。" + detail, ex);
+                    }
+                    WaitWithCancellation(GoogleRetryDelays[attempt], cancellationToken);
+                }
+            }
+        }
+
+        private TranslationResult TranslateWithGoogleMobile(string text, TranslationTarget target, CancellationToken cancellationToken)
+        {
+            string url = "https://translate.google.com/m?sl=auto&tl=" + Uri.EscapeDataString(target.GoogleCode)
+                + "&hl=" + Uri.EscapeDataString(target.GoogleCode) + "&q=" + Uri.EscapeDataString(text);
+            string html = DownloadString(url, "GET", null, null, null, CreateGoogleProxy(), cancellationToken);
+            Match match = Regex.Match(
+                html ?? "",
+                "<div\\s+class=[\\\"']result-container[\\\"'][^>]*>([\\s\\S]*?)</div>",
+                RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                throw new InvalidOperationException("Google Mobile 返回内容中没有找到翻译结果。");
+            }
+
+            string translated = Regex.Replace(match.Groups[1].Value, "<[^>]+>", "");
+            translated = WebUtility.HtmlDecode(translated).Trim();
+            if (string.IsNullOrWhiteSpace(translated))
+            {
+                throw new InvalidOperationException("Google Mobile 返回了空结果。");
+            }
+
+            TranslationResult result = new TranslationResult();
+            result.SourceText = text;
+            result.TranslatedText = translated;
+            result.Provider = "Google";
+            result.TargetLanguage = target.GoogleCode;
+            result.DirectionText = target.DirectionText + " · Mobile 备用接口";
+            return result;
+        }
+
+        private TranslationResult TranslateWithGoogleSingleCore(string text, TranslationTarget target, CancellationToken cancellationToken)
+        {
+            string url = "https://translate.google.com/translate_a/single?dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t"
+                + "&client=gtx&sl=auto&tl=" + Uri.EscapeDataString(target.GoogleCode)
+                + "&hl=" + Uri.EscapeDataString(target.GoogleCode) + "&ie=UTF-8&oe=UTF-8&otf=1&ssel=0&tsel=0&kc=7&q=" + Uri.EscapeDataString(text);
+            string json = DownloadString(url, "GET", null, null, null, CreateGoogleProxy(), cancellationToken);
             object[] root = _serializer.DeserializeObject(json) as object[];
             StringBuilder translated = new StringBuilder();
             if (root != null && root.Length > 0)
@@ -142,7 +238,7 @@ namespace PandanciClone
         {
             if (!string.IsNullOrEmpty(text) && text.Length > MaxBingSegmentLength)
             {
-                return TranslateLongText(text, target, TranslationProvider.Bing, MaxBingSegmentLength);
+                return TranslateLongText(text, target, TranslationProvider.Bing, MaxBingSegmentLength, CancellationToken.None);
             }
             return TranslateWithBingSingle(text, target);
         }
@@ -193,7 +289,7 @@ namespace PandanciClone
             }
         }
 
-        private TranslationResult TranslateLongText(string text, TranslationTarget target, TranslationProvider provider, int maxSegmentLength)
+        private TranslationResult TranslateLongText(string text, TranslationTarget target, TranslationProvider provider, int maxSegmentLength, CancellationToken cancellationToken)
         {
             List<string> parts = SplitTextForTranslation(text, maxSegmentLength);
             TranslationResult result = new TranslationResult();
@@ -205,14 +301,23 @@ namespace PandanciClone
             StringBuilder translated = new StringBuilder();
             for (int i = 0; i < parts.Count; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (i > 0) WaitWithCancellation(GetSegmentDelayMilliseconds(i), cancellationToken);
+
                 string part = parts[i];
-                TranslationResult partResult = provider == TranslationProvider.Bing
-                    ? TranslateWithBingSingle(part, target)
-                    : TranslateWithGoogleSingle(part, target);
+                string segmentCacheKey = BuildCacheKey(provider, target, part);
+                TranslationResult partResult;
+                if (!TryGetCachedResult(segmentCacheKey, out partResult))
+                {
+                    partResult = provider == TranslationProvider.Bing
+                        ? TranslateWithBingSingle(part, target)
+                        : TranslateWithGoogleSingle(part, target, cancellationToken);
+                    if (string.IsNullOrWhiteSpace(partResult.Error)) StoreCachedResult(segmentCacheKey, partResult);
+                }
 
                 if (!string.IsNullOrWhiteSpace(partResult.Error))
                 {
-            if (string.IsNullOrWhiteSpace(result.TranslatedText)) result.Error = provider + " 返回了空结果。";
+                    result.Error = provider + " 长文本第 " + (i + 1).ToString() + " 段翻译失败：" + partResult.Error;
                     return result;
                 }
 
@@ -319,6 +424,81 @@ namespace PandanciClone
             return result;
         }
 
+        private static string BuildCacheKey(TranslationProvider provider, TranslationTarget target, string text)
+        {
+            string language = provider == TranslationProvider.Bing ? target.BingCode : target.GoogleCode;
+            return provider.ToString() + "|" + language + "|" + (text ?? "");
+        }
+
+        private static bool TryGetCachedResult(string key, out TranslationResult result)
+        {
+            lock (CacheLock)
+            {
+                TranslationResult cached;
+                if (TranslationCache.TryGetValue(key, out cached))
+                {
+                    result = CloneResult(cached);
+                    return true;
+                }
+            }
+            result = null;
+            return false;
+        }
+
+        private static void StoreCachedResult(string key, TranslationResult result)
+        {
+            if (result == null || !string.IsNullOrWhiteSpace(result.Error)) return;
+            lock (CacheLock)
+            {
+                if (!TranslationCache.ContainsKey(key))
+                {
+                    CacheOrder.Enqueue(key);
+                }
+                TranslationCache[key] = CloneResult(result);
+                while (TranslationCache.Count > MaxCacheEntries && CacheOrder.Count > 0)
+                {
+                    TranslationCache.Remove(CacheOrder.Dequeue());
+                }
+            }
+        }
+
+        private static TranslationResult CloneResult(TranslationResult source)
+        {
+            TranslationResult clone = new TranslationResult();
+            clone.SourceText = source.SourceText;
+            clone.TranslatedText = source.TranslatedText;
+            clone.Provider = source.Provider;
+            clone.DetectedLanguage = source.DetectedLanguage;
+            clone.TargetLanguage = source.TargetLanguage;
+            clone.DirectionText = source.DirectionText;
+            clone.Error = source.Error;
+            return clone;
+        }
+
+        private static bool IsTooManyRequests(WebException exception)
+        {
+            HttpWebResponse response = exception == null ? null : exception.Response as HttpWebResponse;
+            return response != null && (int)response.StatusCode == 429;
+        }
+
+        private static int GetSegmentDelayMilliseconds(int segmentIndex)
+        {
+            return 300 + ((segmentIndex * 173) % 501);
+        }
+
+        private static void WaitWithCancellation(int milliseconds, CancellationToken cancellationToken)
+        {
+            if (milliseconds <= 0) return;
+            if (!cancellationToken.CanBeCanceled)
+            {
+                Thread.Sleep(milliseconds);
+                return;
+            }
+            if (cancellationToken.WaitHandle.WaitOne(milliseconds))
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+        }
         public static TranslationTarget DetectTarget(string text)
         {
             return DetectTarget(text, TranslationLanguageMode.Auto);
@@ -365,29 +545,48 @@ namespace PandanciClone
 
         private static string DownloadString(string url, string method, string contentType, string body, WebHeaderCollection headers, IWebProxy proxy)
         {
+            return DownloadString(url, method, contentType, body, headers, proxy, CancellationToken.None);
+        }
+
+        private static string DownloadString(string url, string method, string contentType, string body, WebHeaderCollection headers, IWebProxy proxy, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
             request.Method = method;
-            request.UserAgent = "PandanciClone/1.0";
-            request.Timeout = 6000;
-            request.ReadWriteTimeout = 6000;
+            request.UserAgent = GetEdgeUserAgent();
+            request.Accept = "application/json, text/javascript, */*; q=0.01";
+            request.Timeout = 10000;
+            request.ReadWriteTimeout = 10000;
             request.Proxy = proxy;
             if (headers != null) request.Headers.Add(headers);
             if (!string.IsNullOrEmpty(contentType)) request.ContentType = contentType;
-            if (!string.IsNullOrEmpty(body))
-            {
-                byte[] bytes = Encoding.UTF8.GetBytes(body);
-                request.ContentLength = bytes.Length;
-                using (Stream stream = request.GetRequestStream())
-                {
-                    stream.Write(bytes, 0, bytes.Length);
-                }
-            }
 
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            using (Stream stream = response.GetResponseStream())
-            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            using (CancellationTokenRegistration registration = cancellationToken.Register(delegate { request.Abort(); }))
             {
-                return reader.ReadToEnd();
+                try
+                {
+                    if (!string.IsNullOrEmpty(body))
+                    {
+                        byte[] bytes = Encoding.UTF8.GetBytes(body);
+                        request.ContentLength = bytes.Length;
+                        using (Stream stream = request.GetRequestStream())
+                        {
+                            stream.Write(bytes, 0, bytes.Length);
+                        }
+                    }
+
+                    using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                    using (Stream stream = response.GetResponseStream())
+                    using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                    {
+                        return reader.ReadToEnd();
+                    }
+                }
+                catch (WebException)
+                {
+                    if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
+                    throw;
+                }
             }
         }
 
