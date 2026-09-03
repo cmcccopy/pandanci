@@ -1045,10 +1045,7 @@ namespace PandanciClone
                     {
                         if (requestId != _translationRequestId) return;
                         TranslationPopupForm popup = EnsureTranslationPopup();
-                        TranslationLanguageMode languageMode = popup.LanguageMode;
-                        popup.ShowLoading(text);
-                        StartProviderTranslation(requestId, text, TranslationProvider.Google, languageMode);
-                        StartProviderTranslation(requestId, text, TranslationProvider.Bing, languageMode);
+                        popup.ShowReady(text, "Alt+A 已读取");
                     }));
                 }
                 catch (InvalidOperationException)
@@ -1141,10 +1138,7 @@ namespace PandanciClone
                     }
 
                     TranslationPopupForm popup = EnsureTranslationPopup();
-                    TranslationLanguageMode languageMode = popup.LanguageMode;
-                    popup.ShowLoading(text);
-                    StartProviderTranslation(requestId, text, TranslationProvider.Google, languageMode);
-                    StartProviderTranslation(requestId, text, TranslationProvider.Bing, languageMode);
+                    popup.ShowReady(text, "Alt+S OCR 已识别");
                 }));
             }
             catch (InvalidOperationException)

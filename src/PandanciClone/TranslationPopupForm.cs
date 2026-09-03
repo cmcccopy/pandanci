@@ -46,7 +46,6 @@ namespace PandanciClone
         private readonly ResultCardUi _google;
         private readonly ResultCardUi _bing;
         private readonly Timer _outsideClickTimer;
-        private readonly Timer _editDebounceTimer;
         private readonly ToolTip _toolTip;
 
         private string _sourceText = "";
@@ -127,6 +126,7 @@ namespace PandanciClone
             _sourceBox.BorderStyle = BorderStyle.None;
             _sourceBox.BackColor = _inputCard.BackColor;
             _sourceBox.Multiline = true;
+            _sourceBox.AcceptsReturn = true;
             _sourceBox.ScrollBars = ScrollBars.Vertical;
             _sourceBox.WordWrap = true;
             _sourceBox.Font = new Font("Microsoft YaHei UI", 12.5F);
@@ -154,7 +154,6 @@ namespace PandanciClone
                     if (Clipboard.ContainsText())
                     {
                         SetSourceText(Clipboard.GetText().Trim());
-                        RaiseTranslateTextRequested();
                     }
                 }
                 catch
@@ -165,7 +164,7 @@ namespace PandanciClone
             _inputCard.Controls.Add(_pasteButton);
 
             _normalizeButton = MakeCardButton("↵");
-            _normalizeButton.Click += delegate { SetSourceText(NormalizeSourceText(SourceText)); RaiseTranslateTextRequested(); };
+            _normalizeButton.Click += delegate { SetSourceText(NormalizeSourceText(SourceText)); };
             _inputCard.Controls.Add(_normalizeButton);
 
             _clearButton = MakeCardButton("⌫");
@@ -256,14 +255,6 @@ namespace PandanciClone
             _outsideClickTimer.Interval = 50;
             _outsideClickTimer.Tick += OnOutsideClickTimerTick;
             _outsideClickTimer.Start();
-
-            _editDebounceTimer = new Timer();
-            _editDebounceTimer.Interval = 650;
-            _editDebounceTimer.Tick += delegate
-            {
-                _editDebounceTimer.Stop();
-                RaiseTranslateTextRequested();
-            };
 
             WireDrag(this);
             WireDrag(_titleLabel);
@@ -375,11 +366,6 @@ namespace PandanciClone
                     _outsideClickTimer.Stop();
                     _outsideClickTimer.Dispose();
                 }
-                if (_editDebounceTimer != null)
-                {
-                    _editDebounceTimer.Stop();
-                    _editDebounceTimer.Dispose();
-                }
                 if (_toolTip != null)
                 {
                     _toolTip.Dispose();
@@ -406,6 +392,20 @@ namespace PandanciClone
             UpdateDirectionLabels();
             UpdateResults();
             _statusLabel.Text = TranslationService.DetectTarget(_sourceText, GetLanguageMode()).DirectionText + " · Google + Bing";
+            UpdateButtons();
+            ShowPopup(true);
+        }
+
+        public void ShowReady(string sourceText, string sourceName)
+        {
+            SetSourceText(sourceText ?? "");
+            _sourceBox.ReadOnly = false;
+            _translatedText = "";
+            _googleText = "";
+            _bingText = "";
+            UpdateDirectionLabels();
+            UpdateResults();
+            _statusLabel.Text = sourceName + " · Enter 翻译 / Shift+Enter 换行";
             UpdateButtons();
             ShowPopup(true);
         }
@@ -477,7 +477,6 @@ namespace PandanciClone
 
         private void DismissPopup()
         {
-            _editDebounceTimer.Stop();
             Hide();
             EventHandler handler = Dismissed;
             if (handler != null) handler(this, EventArgs.Empty);
@@ -673,10 +672,10 @@ namespace PandanciClone
 
         private void OnSourceBoxKeyDown(object sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.Enter)
+            if (e.KeyCode == Keys.Enter && !e.Shift)
             {
                 e.SuppressKeyPress = true;
-                _editDebounceTimer.Stop();
+                e.Handled = true;
                 RaiseTranslateTextRequested();
             }
         }
@@ -687,19 +686,12 @@ namespace PandanciClone
             _sourceText = _sourceBox.Text.Trim();
             UpdateDirectionLabels();
             UpdateButtons();
-            _editDebounceTimer.Stop();
-            if (!string.IsNullOrWhiteSpace(_sourceText)) _editDebounceTimer.Start();
         }
 
         private void OnLanguageModeChanged(object sender, EventArgs e)
         {
             if (_updatingLanguageMode) return;
             UpdateDirectionLabels();
-            if (Visible && !_sourceBox.ReadOnly && !string.IsNullOrWhiteSpace(SourceText))
-            {
-                _editDebounceTimer.Stop();
-                RaiseTranslateTextRequested();
-            }
         }
 
         private TranslationLanguageMode GetLanguageMode()
@@ -747,7 +739,6 @@ namespace PandanciClone
                     ? TranslationLanguageMode.EnglishToChinese
                     : TranslationLanguageMode.ChineseToEnglish);
             }
-            if (!_sourceBox.ReadOnly && !string.IsNullOrWhiteSpace(SourceText)) RaiseTranslateTextRequested();
         }
 
         private void RaiseTranslateTextRequested()
@@ -765,10 +756,10 @@ namespace PandanciClone
             _toolTip.SetToolTip(_closeButton, "关闭翻译窗口");
             _toolTip.SetToolTip(_speakSourceButton, "朗读输入文本");
             _toolTip.SetToolTip(_copySourceButton, "复制输入文本");
-            _toolTip.SetToolTip(_pasteButton, "粘贴剪贴板文本并翻译");
+            _toolTip.SetToolTip(_pasteButton, "粘贴剪贴板文本");
             _toolTip.SetToolTip(_normalizeButton, "整理换行和 PDF 断词");
             _toolTip.SetToolTip(_clearButton, "清空输入文本");
-            _toolTip.SetToolTip(_translateButton, "重新翻译当前输入");
+            _toolTip.SetToolTip(_translateButton, "翻译当前输入（Enter；Shift+Enter 换行）");
             _toolTip.SetToolTip(_swapLabel, "反转翻译方向");
             _toolTip.SetToolTip(_copyAllButton, "复制全部结果");
             _toolTip.SetToolTip(_saveButton, "把当前输入保存为单词卡");
@@ -802,7 +793,6 @@ namespace PandanciClone
         {
             if (!HasRealResult(text)) return;
             SetSourceText(text);
-            RaiseTranslateTextRequested();
         }
 
         private void SpeakText(string text)
