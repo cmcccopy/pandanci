@@ -40,6 +40,7 @@ namespace PandanciClone
         private TextBox _definitionBox;
         private ListBox _historyBox;
         private TextBox _searchBox;
+        private TextBox _noteEditor;
         private Label _statsLabel;
         private SplitContainer _rootSplit;
         private NotifyIcon _notifyIcon;
@@ -53,6 +54,8 @@ namespace PandanciClone
 
         private WordCard _selectedCard;
         private TextNote _selectedNote;
+        private TextNote _editingNote;
+        private bool _endingNoteEdit;
         private ImageItem _selectedImage;
         private WordCard _linkStartCard;
         private WordCard _dragCard;
@@ -156,7 +159,7 @@ namespace PandanciClone
             menu.Items.Add(settings);
             menu.Items.Add(new ToolStripMenuItem("帮助", null, delegate
             {
-                MessageBox.Show("右键画布可添加单词、笔记或图片；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；空白处按住左键可拖动画布；选中笔记或图片后拖右下角可调整大小。\r\nAlt+A：划词翻译。\r\nAlt+S：截屏 OCR 翻译。\r\nAlt+X：存储当前选中的单词或图片。\r\nAlt+V：释放最后存储的内容到鼠标当前位置。\r\nCtrl+V：剪贴板是图片时粘贴图片。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
+                MessageBox.Show("右键画布可添加单词、笔记或图片；右键单词可复习、查词、存储、关联或删除。\r\n双击单词查词；双击笔记可在原位置编辑；选中笔记或图片后拖右下角可调整大小。\r\nAlt+A：划词翻译。\r\nAlt+S：截屏 OCR 翻译。\r\nAlt+X：存储当前选中的单词或图片。\r\nAlt+V：释放最后存储的内容到鼠标当前位置。\r\nCtrl+V：剪贴板是图片时粘贴图片。\r\nCtrl+L：先选中起点单词，再选中目标单词，建立关联。\r\nCtrl+Shift+L：删除当前选中单词的所有关联线。\r\nCtrl+S：保存当前单词图。", "帮助");
             }));
             mainLayout.Controls.Add(menu, 0, 0);
             MainMenuStrip = menu;
@@ -285,6 +288,19 @@ namespace PandanciClone
             _map.Scroll += delegate { RefreshMapViews(true); };
             _map.Resize += delegate { ClampLeftPanelWidth(); UpdateCanvasSize(); RefreshMapViews(true); };
             right.Controls.Add(_map, 0, 1);
+
+            _noteEditor = new TextBox();
+            _noteEditor.Visible = false;
+            _noteEditor.Multiline = true;
+            _noteEditor.AcceptsReturn = true;
+            _noteEditor.WordWrap = true;
+            _noteEditor.ScrollBars = ScrollBars.Vertical;
+            _noteEditor.BorderStyle = BorderStyle.FixedSingle;
+            _noteEditor.BackColor = Color.LemonChiffon;
+            _noteEditor.Font = _map.Font;
+            _noteEditor.KeyDown += OnNoteEditorKeyDown;
+            _noteEditor.LostFocus += delegate { EndNoteEdit(true); };
+            _map.Controls.Add(_noteEditor);
             Shown += delegate { ClampLeftPanelWidth(); };
         }
 
@@ -822,6 +838,7 @@ namespace PandanciClone
 
         private void LoadWordMap(string path)
         {
+            EndNoteEdit(true);
             _cards.Clear();
             _notes.Clear();
             _images.Clear();
@@ -875,6 +892,7 @@ namespace PandanciClone
 
         private void SaveWordMap(string path)
         {
+            EndNoteEdit(true);
             if (string.IsNullOrEmpty(path))
             {
                 OnSaveAs(this, EventArgs.Empty);
@@ -1604,7 +1622,7 @@ namespace PandanciClone
             }
 
             TextNote note = HitNote(p);
-            if (note != null) EditNote(note);
+            if (note != null) BeginEditNote(note, e.Location);
         }
 
         private void ShowContextMenu(WordCard card, TextNote note, ImageItem image, Point screenPoint)
@@ -2282,9 +2300,71 @@ namespace PandanciClone
 
         private void EditNote(TextNote note)
         {
-            string text = Prompt.Show("笔记", "编辑笔记", note.Text);
-            if (text == null) return;
-            note.Text = text;
+            BeginEditNote(note, null);
+        }
+
+        private void BeginEditNote(TextNote note, Point? clientPoint)
+        {
+            if (note == null) return;
+            EndNoteEdit(true);
+            _editingNote = note;
+            SelectItem(null, note);
+            _noteEditor.Text = note.Text ?? "";
+            PositionNoteEditor();
+            _noteEditor.Visible = true;
+            _noteEditor.BringToFront();
+            _noteEditor.Focus();
+
+            int caret = _noteEditor.TextLength;
+            if (clientPoint.HasValue)
+            {
+                Point local = new Point(clientPoint.Value.X - _noteEditor.Left, clientPoint.Value.Y - _noteEditor.Top);
+                caret = _noteEditor.GetCharIndexFromPosition(local);
+            }
+            _noteEditor.SelectionStart = Math.Max(0, Math.Min(caret, _noteEditor.TextLength));
+            _noteEditor.SelectionLength = 0;
+            _noteEditor.ScrollToCaret();
+        }
+
+        private void PositionNoteEditor()
+        {
+            if (_editingNote == null || _noteEditor == null) return;
+            Rectangle bounds = ToClientRect(new Rectangle(_editingNote.X, _editingNote.Y, _editingNote.Width, _editingNote.Height));
+            _noteEditor.SetBounds(bounds.X, bounds.Y, Math.Max(30, bounds.Width), Math.Max(24, bounds.Height));
+        }
+
+        private void OnNoteEditorKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter && e.Control)
+            {
+                e.SuppressKeyPress = true;
+                e.Handled = true;
+                EndNoteEdit(true);
+                _map.Focus();
+            }
+            else if (e.KeyCode == Keys.Escape)
+            {
+                e.SuppressKeyPress = true;
+                e.Handled = true;
+                EndNoteEdit(false);
+                _map.Focus();
+            }
+        }
+
+        private void EndNoteEdit(bool commit)
+        {
+            if (_editingNote == null || _endingNoteEdit) return;
+            _endingNoteEdit = true;
+            try
+            {
+                if (commit) _editingNote.Text = _noteEditor.Text;
+                _noteEditor.Visible = false;
+                _editingNote = null;
+            }
+            finally
+            {
+                _endingNoteEdit = false;
+            }
             RefreshMapViews();
         }
 
@@ -2456,6 +2536,7 @@ namespace PandanciClone
         private void RefreshMapViews(bool updateMiniMap)
         {
             if (_map != null) _map.Invalidate();
+            if (_noteEditor != null && _noteEditor.Visible) PositionNoteEditor();
             if (updateMiniMap && _miniMap != null && _map != null)
             {
                 _miniMap.Viewport = new Rectangle(-_map.AutoScrollPosition.X - _map.OriginOffset.X, -_map.AutoScrollPosition.Y - _map.OriginOffset.Y, _map.ClientSize.Width, _map.ClientSize.Height);
