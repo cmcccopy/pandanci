@@ -1,5 +1,7 @@
 using System;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace PandanciClone
 {
@@ -107,6 +109,7 @@ namespace PandanciClone
 
     internal sealed class TextNote
     {
+        public string Id = Guid.NewGuid().ToString("N");
         public int X;
         public int Y;
         public int Width;
@@ -115,20 +118,61 @@ namespace PandanciClone
 
         public static TextNote Parse(string line)
         {
-            string[] p = line.Split(new char[] { '|' }, 6);
-            if (p.Length < 6 || p[0] != "WLBTextNotes") return null;
-            TextNote n = new TextNote();
-            n.Y = SafeInt(p[1], 0);
-            n.X = SafeInt(p[2], 0);
-            n.Width = Math.Max(60, SafeInt(p[3], 160));
-            n.Height = Math.Max(30, SafeInt(p[4], 40));
-            n.Text = p[5];
-            return n;
+            if (line.StartsWith("WLBTextNotes2|", StringComparison.Ordinal))
+            {
+                string[] current = line.Split(new char[] { '|' }, 7);
+                if (current.Length < 7) return null;
+                TextNote note = new TextNote();
+                note.Id = string.IsNullOrWhiteSpace(current[1]) ? Guid.NewGuid().ToString("N") : current[1];
+                note.Y = SafeInt(current[2], 0);
+                note.X = SafeInt(current[3], 0);
+                note.Width = Math.Max(60, SafeInt(current[4], 160));
+                note.Height = Math.Max(30, SafeInt(current[5], 40));
+                note.Text = DecodeText(current[6]);
+                return note;
+            }
+
+            string[] legacy = line.Split(new char[] { '|' }, 6);
+            if (legacy.Length < 6 || legacy[0] != "WLBTextNotes") return null;
+            TextNote oldNote = new TextNote();
+            oldNote.Y = SafeInt(legacy[1], 0);
+            oldNote.X = SafeInt(legacy[2], 0);
+            oldNote.Width = Math.Max(60, SafeInt(legacy[3], 160));
+            oldNote.Height = Math.Max(30, SafeInt(legacy[4], 40));
+            oldNote.Text = legacy[5];
+            oldNote.Id = CreateLegacyId(oldNote);
+            return oldNote;
         }
 
         public string ToLine()
         {
-            return string.Join("|", new string[] { "WLBTextNotes", Y.ToString(), X.ToString(), Width.ToString(), Height.ToString(), Text.Replace("\r", " ").Replace("\n", " ") });
+            if (string.IsNullOrWhiteSpace(Id)) Id = Guid.NewGuid().ToString("N");
+            return string.Join("|", new string[]
+            {
+                "WLBTextNotes2", Id, Y.ToString(), X.ToString(), Width.ToString(), Height.ToString(),
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(Text ?? ""))
+            });
+        }
+
+        private static string DecodeText(string value)
+        {
+            try { return Encoding.UTF8.GetString(Convert.FromBase64String(value ?? "")); }
+            catch { return value ?? ""; }
+        }
+
+        private static string CreateLegacyId(TextNote note)
+        {
+            string value = string.Join("|", new string[]
+            {
+                note.Y.ToString(), note.X.ToString(), note.Width.ToString(), note.Height.ToString(), note.Text ?? ""
+            });
+            using (SHA256 hash = SHA256.Create())
+            {
+                byte[] bytes = hash.ComputeHash(Encoding.UTF8.GetBytes(value));
+                byte[] guidBytes = new byte[16];
+                Array.Copy(bytes, guidBytes, guidBytes.Length);
+                return new Guid(guidBytes).ToString("N");
+            }
         }
 
         private static int SafeInt(string s, int fallback)

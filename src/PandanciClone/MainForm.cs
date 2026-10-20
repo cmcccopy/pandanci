@@ -27,6 +27,9 @@ namespace PandanciClone
         private readonly Dictionary<TextNote, Point> _groupNoteStarts = new Dictionary<TextNote, Point>();
         private readonly Dictionary<string, long> _syncWordTicks = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _syncWordSignatures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, long> _syncNoteTicks = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _syncNoteSignatures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, long> _syncDeletedNoteTicks = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         private readonly DictionaryService _dictionary;
         private readonly SelectedTextService _selectedText;
         private readonly TranslationService _translation;
@@ -542,7 +545,7 @@ namespace PandanciClone
                         int changed = ApplySyncPacket(remote);
                         SaveCurrentFile();
                         SaveSyncMetadata();
-                        MessageBox.Show("同步完成，更新单词：" + changed, "局域网同步");
+                        MessageBox.Show("同步完成，更新内容：" + changed, "局域网同步");
                     }));
                 }
                 catch (Exception ex)
@@ -590,6 +593,7 @@ namespace PandanciClone
         private SyncPacket ExportSyncPacket()
         {
             RefreshSyncMetadataForCards();
+            RefreshSyncMetadataForNotes();
             SaveSyncMetadata();
             SyncPacket packet = new SyncPacket();
             packet.DeviceId = _settings.SyncDeviceId;
@@ -597,38 +601,104 @@ namespace PandanciClone
             {
                 string word = NormalizeStoredWord(c.Word);
                 if (string.IsNullOrWhiteSpace(word)) continue;
-                SyncWordRecord record = ToSyncRecord(c, word);
-                packet.Words.Add(record);
+                packet.Words.Add(ToSyncRecord(c, word));
+            }
+            foreach (TextNote note in _notes)
+            {
+                packet.Notes.Add(ToSyncNoteRecord(note));
+            }
+            foreach (KeyValuePair<string, long> deleted in _syncDeletedNoteTicks)
+            {
+                SyncNoteRecord record = new SyncNoteRecord();
+                record.Id = deleted.Key;
+                record.UpdatedAtTicks = deleted.Value;
+                record.DeviceId = _settings.SyncDeviceId;
+                record.Deleted = true;
+                packet.Notes.Add(record);
             }
             return packet;
         }
 
         private int ApplySyncPacket(SyncPacket packet)
         {
-            if (packet == null || packet.Words == null) return 0;
+            if (packet == null) return 0;
             RefreshSyncMetadataForCards();
+            RefreshSyncMetadataForNotes();
             int changed = 0;
-            foreach (SyncWordRecord record in packet.Words)
+            if (packet.Words != null)
             {
-                if (record == null) continue;
-                string word = NormalizeStoredWord(record.Word);
-                if (string.IsNullOrWhiteSpace(word)) continue;
-                if (string.Equals(record.DeviceId, _settings.SyncDeviceId, StringComparison.OrdinalIgnoreCase)) continue;
-
-                long localTicks;
-                bool hasLocalTicks = _syncWordTicks.TryGetValue(word, out localTicks);
-                WordCard card = FindWordCard(word);
-                if (card != null && hasLocalTicks && record.UpdatedAtTicks <= localTicks) continue;
-
-                if (card == null)
+                foreach (SyncWordRecord record in packet.Words)
                 {
-                    card = new WordCard();
-                    _cards.Add(card);
+                    if (record == null) continue;
+                    string word = NormalizeStoredWord(record.Word);
+                    if (string.IsNullOrWhiteSpace(word)) continue;
+                    if (string.Equals(record.DeviceId, _settings.SyncDeviceId, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    long localTicks;
+                    bool hasLocalTicks = _syncWordTicks.TryGetValue(word, out localTicks);
+                    WordCard card = FindWordCard(word);
+                    if (card != null && hasLocalTicks && record.UpdatedAtTicks <= localTicks) continue;
+
+                    if (card == null)
+                    {
+                        card = new WordCard();
+                        _cards.Add(card);
+                    }
+                    ApplyRecordToCard(record, word, card);
+                    _syncWordTicks[word] = record.UpdatedAtTicks;
+                    _syncWordSignatures[word] = BuildSyncSignature(card);
+                    changed++;
                 }
-                ApplyRecordToCard(record, word, card);
-                _syncWordTicks[word] = record.UpdatedAtTicks;
-                _syncWordSignatures[word] = BuildSyncSignature(card);
-                changed++;
+            }
+
+            if (packet.Notes != null)
+            {
+                foreach (SyncNoteRecord record in packet.Notes)
+                {
+                    if (record == null || string.IsNullOrWhiteSpace(record.Id)) continue;
+                    string id = record.Id.Trim();
+                    if (string.Equals(record.DeviceId, _settings.SyncDeviceId, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    long liveTicks;
+                    long deletedTicks;
+                    bool hasLiveTicks = _syncNoteTicks.TryGetValue(id, out liveTicks);
+                    bool hasDeletedTicks = _syncDeletedNoteTicks.TryGetValue(id, out deletedTicks);
+                    long localTicks = Math.Max(hasLiveTicks ? liveTicks : 0, hasDeletedTicks ? deletedTicks : 0);
+                    if (record.UpdatedAtTicks <= localTicks) continue;
+
+                    TextNote note = FindNoteById(id);
+                    if (record.Deleted)
+                    {
+                        if (note != null)
+                        {
+                            if (_editingNote == note) EndNoteEdit(false);
+                            _notes.Remove(note);
+                            _selectedNotes.Remove(note);
+                            if (_selectedNote == note)
+                            {
+                                _selectedNote = null;
+                                _map.SelectedNote = null;
+                            }
+                        }
+                        _syncNoteTicks.Remove(id);
+                        _syncNoteSignatures.Remove(id);
+                        _syncDeletedNoteTicks[id] = record.UpdatedAtTicks;
+                    }
+                    else
+                    {
+                        if (note == null)
+                        {
+                            note = new TextNote();
+                            note.Id = id;
+                            _notes.Add(note);
+                        }
+                        ApplyRecordToNote(record, note);
+                        _syncNoteTicks[id] = record.UpdatedAtTicks;
+                        _syncNoteSignatures[id] = BuildNoteSyncSignature(note);
+                        _syncDeletedNoteTicks.Remove(id);
+                    }
+                    changed++;
+                }
             }
 
             if (changed > 0)
@@ -660,6 +730,21 @@ namespace PandanciClone
             return record;
         }
 
+        private SyncNoteRecord ToSyncNoteRecord(TextNote note)
+        {
+            SyncNoteRecord record = new SyncNoteRecord();
+            record.Id = EnsureNoteId(note);
+            record.Text = note.Text ?? "";
+            record.X = note.X;
+            record.Y = note.Y;
+            record.Width = note.Width;
+            record.Height = note.Height;
+            record.DeviceId = _settings.SyncDeviceId;
+            long ticks;
+            record.UpdatedAtTicks = _syncNoteTicks.TryGetValue(record.Id, out ticks) ? ticks : DateTime.UtcNow.Ticks;
+            return record;
+        }
+
         private void ApplyRecordToCard(SyncWordRecord record, string word, WordCard card)
         {
             card.Word = word;
@@ -673,6 +758,16 @@ namespace PandanciClone
             card.Level = record.Level;
             card.Flag1 = record.Flag1;
             card.Flag2 = record.Flag2;
+        }
+
+        private static void ApplyRecordToNote(SyncNoteRecord record, TextNote note)
+        {
+            note.Id = record.Id;
+            note.Text = record.Text ?? "";
+            note.X = record.X;
+            note.Y = record.Y;
+            note.Width = Math.Max(60, record.Width);
+            note.Height = Math.Max(30, record.Height);
         }
 
         private static DateTime TicksToDate(long ticks)
@@ -705,6 +800,28 @@ namespace PandanciClone
             }
         }
 
+        private void RefreshSyncMetadataForNotes()
+        {
+            long now = DateTime.UtcNow.Ticks;
+            foreach (TextNote note in _notes)
+            {
+                string id = EnsureNoteId(note);
+                _syncDeletedNoteTicks.Remove(id);
+                string signature = BuildNoteSyncSignature(note);
+                string oldSignature;
+                if (!_syncNoteSignatures.TryGetValue(id, out oldSignature))
+                {
+                    _syncNoteSignatures[id] = signature;
+                    if (!_syncNoteTicks.ContainsKey(id)) _syncNoteTicks[id] = now;
+                }
+                else if (!string.Equals(oldSignature, signature, StringComparison.Ordinal))
+                {
+                    _syncNoteSignatures[id] = signature;
+                    _syncNoteTicks[id] = now;
+                }
+            }
+        }
+
         private void MarkSyncUpdated(WordCard card)
         {
             if (card == null) return;
@@ -713,6 +830,31 @@ namespace PandanciClone
             _syncWordTicks[word] = DateTime.UtcNow.Ticks;
             _syncWordSignatures[word] = BuildSyncSignature(card);
             SaveSyncMetadata();
+        }
+
+        private void MarkNoteSyncUpdated(TextNote note)
+        {
+            if (note == null) return;
+            string id = EnsureNoteId(note);
+            _syncNoteTicks[id] = DateTime.UtcNow.Ticks;
+            _syncNoteSignatures[id] = BuildNoteSyncSignature(note);
+            _syncDeletedNoteTicks.Remove(id);
+            SaveSyncMetadata();
+        }
+
+        private TextNote FindNoteById(string id)
+        {
+            foreach (TextNote note in _notes)
+            {
+                if (string.Equals(note.Id, id, StringComparison.OrdinalIgnoreCase)) return note;
+            }
+            return null;
+        }
+
+        private static string EnsureNoteId(TextNote note)
+        {
+            if (string.IsNullOrWhiteSpace(note.Id)) note.Id = Guid.NewGuid().ToString("N");
+            return note.Id;
         }
 
         private static string BuildSyncSignature(WordCard c)
@@ -726,6 +868,14 @@ namespace PandanciClone
             });
         }
 
+        private static string BuildNoteSyncSignature(TextNote note)
+        {
+            if (note == null) return "";
+            return string.Join("|", new string[]
+            {
+                EnsureNoteId(note), note.X.ToString(), note.Y.ToString(), note.Width.ToString(), note.Height.ToString(), note.Text ?? ""
+            });
+        }
         private string GetSyncMetadataPath()
         {
             return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PandanciClone.sync");
@@ -735,6 +885,9 @@ namespace PandanciClone
         {
             _syncWordTicks.Clear();
             _syncWordSignatures.Clear();
+            _syncNoteTicks.Clear();
+            _syncNoteSignatures.Clear();
+            _syncDeletedNoteTicks.Clear();
             string path = GetSyncMetadataPath();
             if (!File.Exists(path)) return;
             string[] lines = File.ReadAllLines(path, Encoding.UTF8);
@@ -742,15 +895,32 @@ namespace PandanciClone
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 string[] parts = line.Split('|');
-                if (parts.Length < 4 || parts[0] != "W") continue;
-                string word = DecodeSyncText(parts[1]);
-                long ticks;
-                if (!long.TryParse(parts[2], out ticks)) ticks = DateTime.UtcNow.Ticks;
-                string signature = DecodeSyncText(parts[3]);
-                if (!string.IsNullOrWhiteSpace(word))
+                if (parts.Length >= 4 && parts[0] == "W")
                 {
-                    _syncWordTicks[word] = ticks;
-                    _syncWordSignatures[word] = signature;
+                    string word = DecodeSyncText(parts[1]);
+                    long ticks;
+                    if (!long.TryParse(parts[2], out ticks)) ticks = DateTime.UtcNow.Ticks;
+                    string signature = DecodeSyncText(parts[3]);
+                    if (!string.IsNullOrWhiteSpace(word))
+                    {
+                        _syncWordTicks[word] = ticks;
+                        _syncWordSignatures[word] = signature;
+                    }
+                }
+                else if (parts.Length >= 5 && parts[0] == "N")
+                {
+                    string id = DecodeSyncText(parts[1]);
+                    long ticks;
+                    if (!long.TryParse(parts[2], out ticks)) ticks = DateTime.UtcNow.Ticks;
+                    string signature = DecodeSyncText(parts[3]);
+                    bool deleted = parts[4] == "1";
+                    if (string.IsNullOrWhiteSpace(id)) continue;
+                    if (deleted) _syncDeletedNoteTicks[id] = ticks;
+                    else
+                    {
+                        _syncNoteTicks[id] = ticks;
+                        _syncNoteSignatures[id] = signature;
+                    }
                 }
             }
         }
@@ -766,13 +936,22 @@ namespace PandanciClone
                     _syncWordSignatures.TryGetValue(item.Key, out signature);
                     lines.Add("W|" + EncodeSyncText(item.Key) + "|" + item.Value.ToString() + "|" + EncodeSyncText(signature ?? ""));
                 }
+                foreach (KeyValuePair<string, long> item in _syncNoteTicks)
+                {
+                    string signature;
+                    _syncNoteSignatures.TryGetValue(item.Key, out signature);
+                    lines.Add("N|" + EncodeSyncText(item.Key) + "|" + item.Value.ToString() + "|" + EncodeSyncText(signature ?? "") + "|0");
+                }
+                foreach (KeyValuePair<string, long> item in _syncDeletedNoteTicks)
+                {
+                    lines.Add("N|" + EncodeSyncText(item.Key) + "|" + item.Value.ToString() + "||1");
+                }
                 File.WriteAllLines(GetSyncMetadataPath(), lines.ToArray(), Encoding.UTF8);
             }
             catch
             {
             }
         }
-
         private static string EncodeSyncText(string text)
         {
             return Convert.ToBase64String(Encoding.UTF8.GetBytes(text ?? ""));
@@ -852,6 +1031,7 @@ namespace PandanciClone
             _storedItems.Clear();
             ClearMultiSelection();
             _currentFile = path;
+            LoadSyncMetadata();
 
             if (!File.Exists(path)) return;
             string[] lines = File.ReadAllLines(path, Encoding.Default);
@@ -862,7 +1042,7 @@ namespace PandanciClone
                     WordCard c = WordCard.Parse(line);
                     if (c != null) _cards.Add(c);
                 }
-                else if (line.StartsWith("WLBTextNotes|"))
+                else if (line.StartsWith("WLBTextNotes|", StringComparison.Ordinal) || line.StartsWith("WLBTextNotes2|", StringComparison.Ordinal))
                 {
                     TextNote n = TextNote.Parse(line);
                     if (n != null) _notes.Add(n);
@@ -893,6 +1073,9 @@ namespace PandanciClone
         private void SaveWordMap(string path)
         {
             EndNoteEdit(true);
+            RefreshSyncMetadataForCards();
+            RefreshSyncMetadataForNotes();
+            SaveSyncMetadata();
             if (string.IsNullOrEmpty(path))
             {
                 OnSaveAs(this, EventArgs.Empty);
@@ -1642,7 +1825,7 @@ namespace PandanciClone
             else if (note != null)
             {
                 menu.Items.Add("编辑笔记", null, delegate { EditNote(note); });
-                menu.Items.Add("删除笔记", null, delegate { _notes.Remove(note); _selectedNotes.Remove(note); _selectedNote = null; UpdateCanvasSize(); RefreshMapViews(); });
+                menu.Items.Add("删除笔记", null, delegate { DeleteNote(note); });
             }
             else if (image != null)
             {
@@ -2193,6 +2376,7 @@ namespace PandanciClone
             note.Height = 60;
             note.Text = string.IsNullOrWhiteSpace(text) ? "笔记" : text;
             _notes.Add(note);
+            MarkNoteSyncUpdated(note);
             SelectItem(null, note);
             UpdateCanvasSize();
             RefreshMapViews();
@@ -2357,7 +2541,11 @@ namespace PandanciClone
             _endingNoteEdit = true;
             try
             {
-                if (commit) _editingNote.Text = _noteEditor.Text;
+                if (commit && !string.Equals(_editingNote.Text, _noteEditor.Text, StringComparison.Ordinal))
+                {
+                    _editingNote.Text = _noteEditor.Text;
+                    MarkNoteSyncUpdated(_editingNote);
+                }
                 _noteEditor.Visible = false;
                 _editingNote = null;
             }
@@ -2433,6 +2621,26 @@ namespace PandanciClone
             return false;
         }
 
+        private void DeleteNote(TextNote note)
+        {
+            if (note == null) return;
+            if (_editingNote == note) EndNoteEdit(false);
+            string id = EnsureNoteId(note);
+            _notes.Remove(note);
+            _selectedNotes.Remove(note);
+            if (_selectedNote == note)
+            {
+                _selectedNote = null;
+                _map.SelectedNote = null;
+            }
+            _syncNoteTicks.Remove(id);
+            _syncNoteSignatures.Remove(id);
+            _syncDeletedNoteTicks[id] = DateTime.UtcNow.Ticks;
+            SaveSyncMetadata();
+            UpdateCanvasSize();
+            if (_miniMap != null) _miniMap.RebuildCache();
+            RefreshMapViews();
+        }
         private void DeleteCard(WordCard card)
         {
             if (card == null) return;

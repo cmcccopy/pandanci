@@ -1,0 +1,21 @@
+[Unit]
+Description=Pandanci LAN Sync Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pandanci-sync
+Group=pandanci-sync
+WorkingDirectory=/opt/pandanci-sync
+ExecStart=/usr/bin/python3 /opt/pandanci-sync/pandanci_sync_server.py --host 0.0.0.0 --port 17890 --database /var/lib/pandanci-sync/pandanci.db
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pandanci-sync
+
+[Install]
+WantedBy=multi-user.target

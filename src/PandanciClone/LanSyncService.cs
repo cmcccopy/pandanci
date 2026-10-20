@@ -26,10 +26,24 @@ namespace PandanciClone
         public string DeviceId = "";
     }
 
+    internal sealed class SyncNoteRecord
+    {
+        public string Id = "";
+        public string Text = "";
+        public int X;
+        public int Y;
+        public int Width;
+        public int Height;
+        public long UpdatedAtTicks;
+        public string DeviceId = "";
+        public bool Deleted;
+    }
+
     internal sealed class SyncPacket
     {
         public string DeviceId = "";
         public List<SyncWordRecord> Words = new List<SyncWordRecord>();
+        public List<SyncNoteRecord> Notes = new List<SyncNoteRecord>();
     }
 
     internal sealed class LanSyncServer : IDisposable
