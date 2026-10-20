@@ -41,6 +41,8 @@ namespace PandanciClone
     internal sealed class SyncPacket
     {
         public string DeviceId = "";
+        public long SinceRevision = 0;
+        public long ServerRevision = 0;
         public List<SyncWordRecord> Words = new List<SyncWordRecord>();
         public List<SyncNoteRecord> Notes = new List<SyncNoteRecord>();
     }
