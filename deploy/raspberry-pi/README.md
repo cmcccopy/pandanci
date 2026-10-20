@@ -1,8 +1,8 @@
 # Raspberry Pi deployment
 
 The server implements the existing Pandanci TCP/JSON protocol and stores both
-word cards and notes in SQLite. Note deletion tombstones are retained so that
-a deleted note is not restored by another device.
+word cards and notes in SQLite. Word and note deletion tombstones are retained
+so that deleted content is not restored by another device.
 
 ## Install
 

@@ -15,7 +15,7 @@ namespace PandanciClone
         public string OcrLanguage = "eng+chi_sim";
         public string LanSyncHost = "";
         public int LanSyncPort = 17890;
-        public string SyncDeviceId = Guid.NewGuid().ToString("N");
+        public string SyncDeviceId = "";
         public bool HasPopupLocation;
         public Point PopupLocation;
         public bool HasPopupSize;
@@ -30,7 +30,11 @@ namespace PandanciClone
         {
             string path = Path.Combine(baseDir, "PandanciClone.settings");
             AppSettings settings = new AppSettings(path);
-            if (!File.Exists(path)) return settings;
+            if (!File.Exists(path))
+            {
+                settings.SyncDeviceId = LoadOrCreateSyncDeviceId("");
+                return settings;
+            }
 
             string[] lines = File.ReadAllLines(path, Encoding.UTF8);
             foreach (string line in lines)
@@ -101,7 +105,33 @@ namespace PandanciClone
                     }
                 }
             }
+            settings.SyncDeviceId = LoadOrCreateSyncDeviceId(settings.SyncDeviceId);
             return settings;
+        }
+
+        private static string LoadOrCreateSyncDeviceId(string fallback)
+        {
+            try
+            {
+                string directory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "PandanciClone");
+                string path = Path.Combine(directory, "sync-device-id.txt");
+                if (File.Exists(path))
+                {
+                    string existing = File.ReadAllText(path, Encoding.UTF8).Trim();
+                    if (!string.IsNullOrWhiteSpace(existing)) return existing;
+                }
+
+                string generated = Guid.NewGuid().ToString("N");
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(path, generated, Encoding.UTF8);
+                return generated;
+            }
+            catch
+            {
+                return string.IsNullOrWhiteSpace(fallback) ? Guid.NewGuid().ToString("N") : fallback;
+            }
         }
 
         public void Save()

@@ -50,7 +50,8 @@ class SyncStore:
         except (TypeError, ValueError):
             return 0
 
-    def _merge_records(self, connection, kind, records, packet_device_id):
+    def _merge_records(self, connection, kind, records, packet_device_id, current_records):
+        updates = []
         for record in records or []:
             if not isinstance(record, dict):
                 continue
@@ -64,21 +65,22 @@ class SyncStore:
                 if not key:
                     continue
                 record["Id"] = key
-                record["Deleted"] = bool(record.get("Deleted", False))
+            record["Deleted"] = bool(record.get("Deleted", False))
 
             ticks = self._safe_ticks(record.get("UpdatedAtTicks"))
             device_id = str(record.get("DeviceId") or packet_device_id or "unknown")[:128]
             record["UpdatedAtTicks"] = ticks
             record["DeviceId"] = device_id
-            payload = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
 
-            current = connection.execute(
-                "SELECT updated_at_ticks, device_id FROM sync_records WHERE kind=? AND record_key=?",
-                (kind, key),
-            ).fetchone()
-            if current is not None and (ticks, device_id) <= (int(current[0]), str(current[1])):
+            current = current_records.get((kind, key))
+            if current is not None and (ticks, device_id) <= current:
                 continue
-            connection.execute(
+            payload = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+            updates.append((kind, key, ticks, device_id, payload))
+            current_records[(kind, key)] = (ticks, device_id)
+
+        if updates:
+            connection.executemany(
                 """
                 INSERT INTO sync_records(kind, record_key, updated_at_ticks, device_id, payload)
                 VALUES(?, ?, ?, ?, ?)
@@ -87,7 +89,7 @@ class SyncStore:
                     device_id=excluded.device_id,
                     payload=excluded.payload
                 """,
-                (kind, key, ticks, device_id, payload),
+                updates,
             )
 
     def merge(self, packet):
@@ -97,8 +99,14 @@ class SyncStore:
         with self.lock:
             with closing(self._connect()) as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                self._merge_records(connection, "word", packet.get("Words"), packet_device_id)
-                self._merge_records(connection, "note", packet.get("Notes"), packet_device_id)
+                current_records = {
+                    (str(kind), str(key)): (int(ticks), str(device_id))
+                    for kind, key, ticks, device_id in connection.execute(
+                        "SELECT kind, record_key, updated_at_ticks, device_id FROM sync_records"
+                    )
+                }
+                self._merge_records(connection, "word", packet.get("Words"), packet_device_id, current_records)
+                self._merge_records(connection, "note", packet.get("Notes"), packet_device_id, current_records)
                 connection.commit()
                 rows = connection.execute(
                     "SELECT kind, payload FROM sync_records ORDER BY kind, record_key"
@@ -113,6 +121,7 @@ class SyncStore:
 
 class SyncRequestHandler(socketserver.BaseRequestHandler):
     def handle(self):
+        self.request.settimeout(120)
         chunks = []
         size = 0
         while True:
@@ -128,7 +137,10 @@ class SyncRequestHandler(socketserver.BaseRequestHandler):
         packet = json.loads(b"".join(chunks).decode("utf-8"))
         response = self.server.store.merge(packet)
         data = json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        self.request.sendall(data)
+        try:
+            self.request.sendall(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
 
 class ThreadedSyncServer(socketserver.ThreadingTCPServer):

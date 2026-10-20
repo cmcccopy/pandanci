@@ -14,5 +14,13 @@ $refs = @(
 if ($LASTEXITCODE -ne 0) {
     throw "C# compiler failed with exit code $LASTEXITCODE"
 }
-Copy-Item -LiteralPath "$PSScriptRoot\PandanciClone.exe.config" -Destination "$root\PandanciClone.exe.config" -Force
+$sourceConfig = "$PSScriptRoot\PandanciClone.exe.config"
+$targetConfig = "$root\PandanciClone.exe.config"
+$copyConfig = -not (Test-Path -LiteralPath $targetConfig)
+if (-not $copyConfig) {
+    $copyConfig = (Get-FileHash -LiteralPath $sourceConfig -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $targetConfig -Algorithm SHA256).Hash
+}
+if ($copyConfig) {
+    Copy-Item -LiteralPath $sourceConfig -Destination $targetConfig -Force
+}
 Write-Host "Built $root\PandanciClone.exe"
