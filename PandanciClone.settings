@@ -1,10 +1,10 @@
-﻿GoogleProxyAddress=127.0.0.1:10801
+﻿GoogleProxyAddress=localhost:10805
 TesseractPath=./tesseract
 OcrLanguage=eng+chi_sim
 LanSyncHost=172.16.204.193
 LanSyncPort=17890
 SyncDeviceId=bcd060199cf44d23b99257f1927bd44e
-PopupX=1528
-PopupY=291
+PopupX=1616
+PopupY=266
 PopupWidth=370
 PopupHeight=550

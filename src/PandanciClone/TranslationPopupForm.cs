@@ -51,6 +51,7 @@ namespace PandanciClone
         private string _sourceText = "";
         private string _translatedText = "";
         private string _googleText = "";
+        private string _googleDirectionText = "";
         private string _bingText = "";
         private bool _pinned;
         private bool _lastMouseDown;
@@ -384,6 +385,7 @@ namespace PandanciClone
 
         public void ShowLoading(string sourceText)
         {
+            _googleDirectionText = "";
             SetSourceText(sourceText ?? "");
             _translatedText = "";
             _googleText = "正在翻译...";
@@ -398,6 +400,7 @@ namespace PandanciClone
 
         public void ShowReady(string sourceText, string sourceName)
         {
+            _googleDirectionText = "";
             SetSourceText(sourceText ?? "");
             _sourceBox.ReadOnly = false;
             _translatedText = "";
@@ -443,6 +446,7 @@ namespace PandanciClone
         public void ShowResult(TranslationResult result)
         {
             if (result == null) return;
+            _googleDirectionText = string.Equals(result.Provider, "Google", StringComparison.OrdinalIgnoreCase) ? result.DirectionText : "";
             SetSourceText(result.SourceText ?? "");
             _sourceBox.ReadOnly = false;
             _translatedText = result.TranslatedText ?? "";
@@ -466,12 +470,17 @@ namespace PandanciClone
 
             string text = string.IsNullOrWhiteSpace(result.Error) ? result.TranslatedText : result.Error;
             if (string.Equals(result.Provider, "Bing", StringComparison.OrdinalIgnoreCase)) _bingText = text;
-            else _googleText = text;
+            else
+            {
+                _googleText = text;
+                _googleDirectionText = result.DirectionText;
+            }
 
             _sourceBox.ReadOnly = false;
             UpdateDirectionLabels();
             UpdateResults();
-            _statusLabel.Text = (string.IsNullOrWhiteSpace(result.DirectionText) ? TranslationService.DetectTarget(_sourceText, GetLanguageMode()).DirectionText : result.DirectionText) + " · Google + Bing";
+            string direction = string.IsNullOrWhiteSpace(_googleDirectionText) ? result.DirectionText : _googleDirectionText;
+            _statusLabel.Text = (string.IsNullOrWhiteSpace(direction) ? TranslationService.DetectTarget(_sourceText, GetLanguageMode()).DirectionText : direction) + " · Google + Bing";
             UpdateButtons();
         }
 

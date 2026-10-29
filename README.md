@@ -33,6 +33,59 @@ powershell -ExecutionPolicy Bypass -File .\src\PandanciClone\build.ps1
 
 构建结果为根目录下的 `PandanciClone.exe`。
 
+如果旧程序正在运行、无法覆盖可执行文件，可先生成独立新版：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\src\PandanciClone\build.ps1 -OutputFile PandanciClone.updated.exe
+```
+
+保存内容并退出旧程序后，运行 `PandanciClone.updated.exe` 即可。该文件位于同一目录，继续使用现有单词图和设置。
+
+## Google 翻译与 429 限流
+
+客户端会同时请求 Google 和 Bing，并分别显示结果。未配置 API Key 时，Google 默认使用免密钥 Web 遗留接口：
+
+```text
+https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=hello
+```
+
+该入口不需要 Google Cloud 项目或 API Key。直接打开翻译窗口使用即可；如果所在网络无法直连 Google，可在“设置 → 翻译代理...”中填写可用的 HTTP 代理。结果状态会显示“Google Web（免密钥）”。如曾配置官方密钥，应清除本机密钥和 `PANDANCI_GOOGLE_TRANSLATE_API_KEY` 环境变量后再使用免密钥模式。
+
+2026-10-21 在当前代理配置下，使用 Windows 内置 `curl` 实测该入口返回 HTTP 200；相同入口通过现有 .NET 网络库请求仍返回 429。因此免密钥模式优先使用 Windows 系统目录中的 `curl.exe` 发出请求，遵循软件配置的代理，并支持取消、超时和冷却；系统没有 `curl.exe` 时才使用 .NET 请求。Windows 10/11 通常已经包含该工具。编译后的客户端已实测双向翻译成功：`hello` → “你好”，`你好` → “Hello”。
+
+程序已从原来的 `translate.google.com/translate_a/single` 切换至此入口。尽管域名包含 `googleapis.com`，这个 `client=gtx` 遗留接口仍不是有稳定性承诺的 Cloud Translation API，后续可能限流或变更。
+
+如果直连或代理的出口 IP 被限流，公共 JSON 和 Mobile 页面都可能返回 `429 Too Many Requests`。短时间重复访问两个入口通常不能解除这种限制。
+
+当前版本已移除 Mobile 轮询和 1、2、4、8 秒的重复请求，改为：
+
+- 多个翻译请求和长文本分段共用请求队列，公共接口的请求启动间隔至少为 1.5 秒。
+- 首次收到公共接口 429 后暂停该出口的请求至少 5 分钟；再次限流会延长冷却，默认最多延长至 30 分钟。服务器指定的 `Retry-After` 更长时，以服务器为准。
+- 冷却期间直接提示剩余时间，已缓存的结果仍可使用，右侧 Bing 翻译独立运行。
+- 相同内容和目标语言复用缓存；长文本中已完成的段落也会复用，切换文本或关闭弹窗会取消旧的 Google 请求。
+
+这些措施减少重复请求，但无法保证免密钥接口永不返回 429。日常使用可以继续使用 Web 遗留接口；对可用性有更高要求时，可选择配置 Google 官方 Cloud Translation API。
+
+### 配置 Google 官方接口
+
+1. 在 [Google Cloud Console](https://console.cloud.google.com/) 创建或选择项目，启用 **Cloud Translation API**，按官方要求配置结算与配额。
+2. 创建 API Key，并将其 API 使用范围限制为 Cloud Translation API。客户端使用 Basic v2 接口；不要为这个桌面客户端设置仅限浏览器 HTTP Referer 的密钥限制。
+3. 打开软件“设置 → Google 官方接口...”，填入 API Key，确定后再次翻译。结果状态会注明“Google 官方接口”。现有的“翻译代理...”设置同样适用于官方接口。
+
+密钥保存在 `%LocalAppData%\PandanciClone\google-translation-key.bin`，通过 Windows DPAPI 按当前用户加密，不写入项目中的 `.settings` 或同步数据。不要把该密钥文件复制到其他电脑；每台设备分别配置即可。官方服务按 Google 当前价格、免费额度和项目配额计费。
+
+也可以设置当前用户的环境变量 `PANDANCI_GOOGLE_TRANSLATE_API_KEY`，重启程序后生效。本机加密保存的密钥优先；在设置中留空会清除本机密钥，但不会删除环境变量。两者均未配置时使用公共接口。
+
+官方接口收到 429 或配额类 403 时也会暂停请求，默认至少 60 秒，并遵守 `Retry-After`。密钥无效、API 未启用、结算或权限问题会给出对应提示，请检查 Google Cloud 项目；不会自动切回公共接口掩盖配置错误。
+
+参考资料：[Google 官方身份验证](https://docs.cloud.google.com/translate/docs/authentication)、[文本翻译 API](https://docs.cloud.google.com/translate/docs/basic/translating-text)、[配额说明](https://docs.cloud.google.com/translate/quotas)、[HTTP 429 与 Retry-After 标准](https://www.rfc-editor.org/rfc/rfc6585.html#section-4)。
+
+翻译回归测试可在仓库根目录运行，无需 Google Key，也不会发送外网翻译请求：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\run-translation-tests.ps1
+```
+
 ## 局域网同步
 
 当前树莓派同步服务器地址：

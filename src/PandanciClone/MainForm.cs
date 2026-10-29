@@ -156,6 +156,7 @@ namespace PandanciClone
             menu.Items.Add(file);
             ToolStripMenuItem settings = new ToolStripMenuItem("设置");
             settings.DropDownItems.Add("翻译代理...", null, OnSetTranslationProxy);
+            settings.DropDownItems.Add("Google 官方接口...", null, OnSetGoogleApiKey);
             settings.DropDownItems.Add("OCR 设置...", null, OnSetOcrSettings);
             ToolStripMenuItem lanSync = new ToolStripMenuItem("局域网同步");
             lanSync.DropDownItems.Add("同步设置...", null, OnConfigureLanSync);
@@ -437,6 +438,29 @@ namespace PandanciClone
             catch (Exception ex)
             {
                 MessageBox.Show("保存翻译代理失败：" + ex.Message, "翻译代理", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void OnSetGoogleApiKey(object sender, EventArgs e)
+        {
+            string current = "";
+            try { current = GoogleTranslationCredentials.LoadApiKey(); }
+            catch (InvalidOperationException) { }
+            string value = Prompt.ShowSecret("Cloud Translation v2 API Key\r\n留空清除本机密钥；官方服务按 Google 配额和价格计费。", "Google 官方接口", current);
+            if (value == null) return;
+            try
+            {
+                GoogleTranslationCredentials.SaveApiKey(value);
+                CancelGoogleTranslation();
+                bool configured = !string.IsNullOrWhiteSpace(GoogleTranslationCredentials.LoadApiKey());
+                MessageBox.Show(configured
+                    ? "Google 官方接口已配置，下次翻译时生效。请确保项目已启用 Cloud Translation API 并配置结算和配额。密钥仅在本机按当前 Windows 用户加密保存。"
+                    : "本机密钥已清除，将使用 Google 公共接口；公共接口仍可能受 IP 限流。",
+                    "Google 官方接口");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("保存 Google API Key 失败：" + ex.Message, "Google 官方接口", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -3369,35 +3393,57 @@ namespace PandanciClone
 
         public static string Show(string text, string caption, string defaultValue)
         {
-            Form form = new Form();
-            Label label = new Label();
-            TextBox input = new TextBox();
-            Button ok = new Button();
-            Button cancel = new Button();
+            return Show(text, caption, defaultValue, false);
+        }
 
-            form.Text = caption;
-            label.Text = text;
-            input.Left = 12;
-            input.Top = 36;
-            input.Width = 300;
-            input.Text = defaultValue;
-            label.Left = 12;
-            label.Top = 12;
-            label.AutoSize = true;
-            ok.Text = "确定";
-            ok.Left = 156;
-            ok.Top = 72;
-            ok.DialogResult = DialogResult.OK;
-            cancel.Text = "取消";
-            cancel.Left = 237;
-            cancel.Top = 72;
-            cancel.DialogResult = DialogResult.Cancel;
-            form.ClientSize = new Size(326, 110);
-            form.Controls.AddRange(new Control[] { label, input, ok, cancel });
-            form.AcceptButton = ok;
-            form.CancelButton = cancel;
-            form.StartPosition = FormStartPosition.CenterParent;
-            return form.ShowDialog() == DialogResult.OK ? input.Text : null;
+        public static string ShowSecret(string text, string caption, string defaultValue)
+        {
+            return Show(text, caption, defaultValue, true);
+        }
+
+        private static string Show(string text, string caption, string defaultValue, bool secret)
+        {
+            using (Form form = new Form())
+            {
+                Label label = new Label();
+                TextBox input = new TextBox();
+                Button ok = new Button();
+                Button cancel = new Button();
+
+                form.Text = caption;
+                label.Text = text;
+                input.Left = 12;
+                input.Top = 36;
+                input.Width = 300;
+                input.Text = defaultValue;
+                label.Left = 12;
+                label.Top = 12;
+                label.AutoSize = true;
+                ok.Text = "确定";
+                ok.Left = 156;
+                ok.Top = 72;
+                ok.DialogResult = DialogResult.OK;
+                cancel.Text = "取消";
+                cancel.Left = 237;
+                cancel.Top = 72;
+                cancel.DialogResult = DialogResult.Cancel;
+                form.ClientSize = new Size(326, 110);
+                form.Controls.AddRange(new Control[] { label, input, ok, cancel });
+                form.AcceptButton = ok;
+                form.CancelButton = cancel;
+                form.StartPosition = FormStartPosition.CenterParent;
+                if (secret)
+                {
+                    input.UseSystemPasswordChar = true;
+                    label.AutoSize = false;
+                    label.Size = new Size(300, 55);
+                    input.Top = 72;
+                    ok.Top = 108;
+                    cancel.Top = 108;
+                    form.ClientSize = new Size(326, 146);
+                }
+                return form.ShowDialog() == DialogResult.OK ? input.Text : null;
+            }
         }
     }
 }
