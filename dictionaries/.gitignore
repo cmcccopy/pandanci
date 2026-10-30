@@ -1,0 +1,5 @@
+*.db
+*.db-*
+downloads/
+.work-*/
+*.partial

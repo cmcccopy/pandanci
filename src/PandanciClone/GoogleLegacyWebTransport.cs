@@ -22,6 +22,12 @@ namespace PandanciClone
 
         public static string Download(string url, IWebProxy proxy, CancellationToken cancellationToken)
         {
+            return DownloadRequest(url, "GET", null, null, null, proxy, cancellationToken);
+        }
+
+        public static string DownloadRequest(string url, string method, string contentType, string body,
+            WebHeaderCollection headers, IWebProxy proxy, CancellationToken cancellationToken)
+        {
             cancellationToken.ThrowIfCancellationRequested();
             string headerFile = Path.GetTempFileName();
             try
@@ -35,6 +41,11 @@ namespace PandanciClone
                 args.Append(" --noproxy ").Append(QuoteArgument(proxyAddress.Length == 0 ? "*" : ""));
                 if (proxyAddress.Length > 0) args.Append(" --proxy ").Append(QuoteArgument(proxyAddress));
                 args.Append(" --url ").Append(QuoteArgument(url));
+                args.Append(" --request ").Append(QuoteArgument(method));
+                if (!string.IsNullOrEmpty(contentType)) args.Append(" --header ").Append(QuoteArgument("Content-Type: " + contentType));
+                if (headers != null)
+                    foreach (string name in headers.AllKeys) args.Append(" --header ").Append(QuoteArgument(name + ": " + headers[name]));
+                if (body != null) args.Append(" --data-binary @-");
 
                 ProcessStartInfo start = new ProcessStartInfo(CurlPath, args.ToString());
                 start.UseShellExecute = false;
@@ -42,6 +53,7 @@ namespace PandanciClone
                 start.WindowStyle = ProcessWindowStyle.Hidden;
                 start.RedirectStandardOutput = true;
                 start.RedirectStandardError = true;
+                start.RedirectStandardInput = body != null;
                 start.StandardOutputEncoding = Encoding.UTF8;
                 start.StandardErrorEncoding = Encoding.UTF8;
                 using (Process process = new Process())
@@ -55,6 +67,12 @@ namespace PandanciClone
                         Stopwatch timer = Stopwatch.StartNew();
                         try
                         {
+                            if (body != null)
+                            {
+                                byte[] bytes = Encoding.UTF8.GetBytes(body);
+                                process.StandardInput.BaseStream.Write(bytes, 0, bytes.Length);
+                                process.StandardInput.Close();
+                            }
                             while (!process.WaitForExit(100))
                             {
                                 cancellationToken.ThrowIfCancellationRequested();
@@ -72,6 +90,11 @@ namespace PandanciClone
                                 throw new InvalidOperationException("Google Web 网络请求失败（curl 退出码 " + process.ExitCode.ToString(CultureInfo.InvariantCulture)
                                     + "），请检查翻译代理和网络。");
                             return ParseResponse(response, File.ReadAllText(headerFile));
+                        }
+                        catch (IOException)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            throw;
                         }
                         finally
                         {

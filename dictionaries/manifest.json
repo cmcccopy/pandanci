@@ -1,0 +1,25 @@
+{
+  "installed_at_utc": "2026-10-29T13:13:45.636271+00:00",
+  "index_version": 1,
+  "counts": {
+    "ecdict_entries": 3402564,
+    "cedict_entries": 125324,
+    "chinese_reverse_terms": 6368485,
+    "word_forms": 455009
+  },
+  "sources": [
+    {
+      "name": "ECDICT",
+      "version": "1.0.28",
+      "license": "MIT (upstream repository)",
+      "url": "https://github.com/skywind3000/ECDICT/releases/download/1.0.28/ecdict-sqlite-28.zip",
+      "sha256": "ea01f76a3b3351021ce47077e89234465cc9441c8793054495320d06c0c3f3f6"
+    },
+    {
+      "name": "CC-CEDICT",
+      "license": "CC BY-SA 4.0",
+      "url": "https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz",
+      "sha256": "06d0d0e23362867f00ed399a634af016954d14cf3e074b1a937088db6837fb74"
+    }
+  ]
+}

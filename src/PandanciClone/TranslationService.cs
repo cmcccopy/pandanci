@@ -15,7 +15,8 @@ namespace PandanciClone
     internal enum TranslationProvider
     {
         Google,
-        Bing
+        Bing,
+        LocalDictionary
     }
 
     internal enum TranslationLanguageMode
@@ -167,7 +168,7 @@ namespace PandanciClone
                     if (TryGetCachedResult(cacheKey, out cached)) return cached;
                     TranslationResult result = official
                         ? TranslateWithGoogleCloud(text, target, apiKey, cancellationToken)
-                        : TranslateWithGoogleSingleCore(text, target, cancellationToken);
+                        : TranslateWithGoogleWeb(text, target, cancellationToken);
                     if (string.IsNullOrWhiteSpace(result.Error)) StoreCachedResult(cacheKey, result);
                     return result;
                 }, cancellationToken);
@@ -211,6 +212,27 @@ namespace PandanciClone
             if (first != null && first.TryGetValue("detectedSourceLanguage", out value)) result.DetectedLanguage = Convert.ToString(value);
             if (string.IsNullOrWhiteSpace(result.TranslatedText)) result.Error = "Google 官方接口返回了空结果。";
             return result;
+        }
+
+        private TranslationResult TranslateWithGoogleWeb(string text, TranslationTarget target, CancellationToken cancellationToken)
+        {
+            try
+            {
+                WebHeaderCollection headers = new WebHeaderCollection();
+                headers["Origin"] = "https://translate.google.com";
+                string url = "https://translate.google.com/_/TranslateWebserverUi/data/batchexecute?rpcids=MkEWBc&source-path=%2F&rt=c&hl="
+                    + Uri.EscapeDataString(target.GoogleCode);
+                string response = _download(url, "POST", "application/x-www-form-urlencoded;charset=UTF-8",
+                    GoogleWebRpc.BuildBody(text, target.GoogleCode), headers, CreateGoogleProxy(), cancellationToken);
+                return GoogleWebRpc.Parse(response, text, target);
+            }
+            catch (TranslationHttpException ex)
+            {
+                // An endpoint removal is different from rate limiting: never bypass a 429/Retry-After.
+                if (ex.StatusCode != 404 && ex.StatusCode != 405 && ex.StatusCode != 410) throw;
+            }
+            catch (InvalidDataException) { }
+            return TranslateWithGoogleSingleCore(text, target, cancellationToken);
         }
 
         private TranslationResult TranslateWithGoogleSingleCore(string text, TranslationTarget target, CancellationToken cancellationToken)
@@ -455,7 +477,7 @@ namespace PandanciClone
             string identity = (apiKey ?? "") + "|" + (_googleProxyAddress ?? "").Trim();
             using (SHA256 hash = SHA256.Create())
             {
-                return (string.IsNullOrWhiteSpace(apiKey) ? "GoogleLegacy|" : "GoogleCloud|")
+                return (string.IsNullOrWhiteSpace(apiKey) ? "GoogleWebRpc|" : "GoogleCloud|")
                     + Convert.ToBase64String(hash.ComputeHash(Encoding.UTF8.GetBytes(identity)));
             }
         }
@@ -576,9 +598,10 @@ namespace PandanciClone
         {
             cancellationToken.ThrowIfCancellationRequested();
             Uri uri = new Uri(url);
-            if (method == "GET" && uri.Scheme == "https" && uri.Host == "translate.googleapis.com"
-                && uri.AbsolutePath == "/translate_a/single" && GoogleLegacyWebTransport.IsAvailable)
-                return GoogleLegacyWebTransport.Download(url, proxy, cancellationToken);
+            bool legacy = method == "GET" && uri.Host == "translate.googleapis.com" && uri.AbsolutePath == "/translate_a/single";
+            bool rpc = method == "POST" && uri.Host == "translate.google.com" && uri.AbsolutePath == "/_/TranslateWebserverUi/data/batchexecute";
+            if (uri.Scheme == "https" && (legacy || rpc) && GoogleLegacyWebTransport.IsAvailable)
+                return GoogleLegacyWebTransport.DownloadRequest(url, method, contentType, body, headers, proxy, cancellationToken);
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
             request.Method = method;
             request.UserAgent = GetEdgeUserAgent();

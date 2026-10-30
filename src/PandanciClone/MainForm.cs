@@ -317,7 +317,7 @@ namespace PandanciClone
             trayMenu.Items.Add("隐藏窗口", null, delegate { Hide(); });
             trayMenu.Items.Add(new ToolStripSeparator());
 
-            ToolStripMenuItem providerHint = new ToolStripMenuItem("Google + Bing 同时翻译");
+            ToolStripMenuItem providerHint = new ToolStripMenuItem("Google 翻译 + 本地中英词典");
             providerHint.Enabled = false;
             trayMenu.Items.Add(providerHint);
 
@@ -411,6 +411,7 @@ namespace PandanciClone
                 _translationPopup.SaveWordRequested += OnPopupSaveWordRequested;
                 _translationPopup.PopupLocationChanged += OnPopupLocationChanged;
                 _translationPopup.TranslateTextRequested += OnPopupTranslateTextRequested;
+                _translationPopup.LocalDictionaryLookupRequested += OnPopupLocalDictionaryLookupRequested;
                 _translationPopup.Dismissed += OnTranslationPopupDismissed;
             }
             return _translationPopup;
@@ -1170,7 +1171,16 @@ namespace PandanciClone
             TranslationLanguageMode languageMode = popup.LanguageMode;
             popup.ShowLoading(text);
             StartProviderTranslation(requestId, text, TranslationProvider.Google, languageMode);
-            StartProviderTranslation(requestId, text, TranslationProvider.Bing, languageMode);
+            StartProviderTranslation(requestId, text, TranslationProvider.LocalDictionary, languageMode);
+        }
+
+        private void OnPopupLocalDictionaryLookupRequested(object sender, EventArgs e)
+        {
+            TranslationPopupForm popup = EnsureTranslationPopup();
+            string text = popup.SourceText;
+            if (string.IsNullOrWhiteSpace(text)) return;
+            popup.ShowDictionaryLoading();
+            StartProviderTranslation(_translationRequestId, text, TranslationProvider.LocalDictionary, popup.LanguageMode);
         }
 
         private static void AddToolbarButton(FlowLayoutPanel toolbar, string text, EventHandler click)
@@ -1532,8 +1542,12 @@ namespace PandanciClone
 
             ThreadPool.QueueUserWorkItem(delegate
             {
-                TranslationService service = new TranslationService();
-                TranslationResult result = service.Translate(text, provider, languageMode);
+                TranslationResult result;
+                try { result = _dictionary.LookupText(text, languageMode, CancellationToken.None); }
+                catch (Exception ex)
+                {
+                    result = new TranslationResult { SourceText = text, Provider = "LocalDictionary", Error = "本地查词失败：" + ex.Message };
+                }
                 BeginShowProviderResult(requestId, result);
             });
         }

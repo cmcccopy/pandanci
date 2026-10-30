@@ -1,6 +1,6 @@
 # PandanciClone
 
-PandanciClone 是一个使用 C# WinForms 编写的本地单词图工具，兼容项目目录中的 `.wordmap` 文件，并可读取 `user-dict.txt`、`dict.db` 和 `Dictionary.db` 查询释义。
+PandanciClone 是一个使用 C# WinForms 编写的本地单词图工具，兼容项目目录中的 `.wordmap` 文件，支持 Google 翻译与本地中英双向词典。
 
 ## 主要功能
 
@@ -8,7 +8,7 @@ PandanciClone 是一个使用 C# WinForms 编写的本地单词图工具，兼�
 - 添加、拖动、复习和删除单词卡
 - 添加、编辑和调整文本笔记
 - 添加图片以及建立单词关联线
-- 使用 Google 和 Bing 翻译，支持划词翻译
+- 使用 Google 翻译和本地中英词典，支持划词查询
 - 使用 Tesseract 进行截图 OCR 翻译
 - 在局域网内同步单词卡和文本笔记
 - 使用简化记忆曲线安排下次复习时间
@@ -43,17 +43,17 @@ powershell -ExecutionPolicy Bypass -File .\src\PandanciClone\build.ps1 -OutputFi
 
 ## Google 翻译与 429 限流
 
-客户端会同时请求 Google 和 Bing，并分别显示结果。未配置 API Key 时，Google 默认使用免密钥 Web 遗留接口：
+查询窗口包含 Google 翻译与本地词典两个独立面板，原 Bing 面板已替换为离线查词。未配置 API Key 时，Google 优先使用免密钥网页 RPC 协议：
 
 ```text
-https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=hello
+POST https://translate.google.com/_/TranslateWebserverUi/data/batchexecute?rpcids=MkEWBc
 ```
 
-该入口不需要 Google Cloud 项目或 API Key。直接打开翻译窗口使用即可；如果所在网络无法直连 Google，可在“设置 → 翻译代理...”中填写可用的 HTTP 代理。结果状态会显示“Google Web（免密钥）”。如曾配置官方密钥，应清除本机密钥和 `PANDANCI_GOOGLE_TRANSLATE_API_KEY` 环境变量后再使用免密钥模式。
+该入口不需要 Google Cloud 项目或 API Key。直接打开翻译窗口使用即可；如果所在网络无法直连 Google，可在“设置 → 翻译代理...”中填写可用的 HTTP 代理，例如 `127.0.0.1:10805`。结果状态会显示“Google Web RPC（免密钥）”。如曾配置官方密钥，应清除本机密钥和 `PANDANCI_GOOGLE_TRANSLATE_API_KEY` 环境变量后再使用免密钥模式。
 
-2026-10-21 在当前代理配置下，使用 Windows 内置 `curl` 实测该入口返回 HTTP 200；相同入口通过现有 .NET 网络库请求仍返回 429。因此免密钥模式优先使用 Windows 系统目录中的 `curl.exe` 发出请求，遵循软件配置的代理，并支持取消、超时和冷却；系统没有 `curl.exe` 时才使用 .NET 请求。Windows 10/11 通常已经包含该工具。编译后的客户端已实测双向翻译成功：`hello` → “你好”，`你好` → “Hello”。
+2026-10-29 在当前代理配置下实测 RPC 入口返回 HTTP 200。实现参考了开源项目 [translators 的 GoogleV2 协议](https://github.com/UlionTse/translators)及 [googletrans](https://github.com/ssut/py-googletrans)，没有引入它们的运行依赖。程序使用 Windows 系统目录中的 `curl.exe` 发出请求，遵循软件配置的代理，并支持取消、超时和冷却；系统没有 `curl.exe` 时才使用 .NET 请求。Windows 10/11 通常已经包含该工具。
 
-程序已从原来的 `translate.google.com/translate_a/single` 切换至此入口。尽管域名包含 `googleapis.com`，这个 `client=gtx` 遗留接口仍不是有稳定性承诺的 Cloud Translation API，后续可能限流或变更。
+RPC 入口不存在或响应格式变化时，才尝试原来的 `https://translate.googleapis.com/translate_a/single?client=gtx` 遗留接口一次。收到 429 或 503 时遵守冷却规则，不通过反复切换入口绕开服务器要求。两个网页接口都可能限流或变更，RPC 也不是有稳定性承诺的 Cloud Translation API。
 
 如果直连或代理的出口 IP 被限流，公共 JSON 和 Mobile 页面都可能返回 `429 Too Many Requests`。短时间重复访问两个入口通常不能解除这种限制。
 
@@ -61,7 +61,7 @@ https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&
 
 - 多个翻译请求和长文本分段共用请求队列，公共接口的请求启动间隔至少为 1.5 秒。
 - 首次收到公共接口 429 后暂停该出口的请求至少 5 分钟；再次限流会延长冷却，默认最多延长至 30 分钟。服务器指定的 `Retry-After` 更长时，以服务器为准。
-- 冷却期间直接提示剩余时间，已缓存的结果仍可使用，右侧 Bing 翻译独立运行。
+- 冷却期间直接提示 HTTP 状态和剩余时间，已缓存的结果仍可使用，右侧本地词典独立运行且不联网。
 - 相同内容和目标语言复用缓存；长文本中已完成的段落也会复用，切换文本或关闭弹窗会取消旧的 Google 请求。
 
 这些措施减少重复请求，但无法保证免密钥接口永不返回 429。日常使用可以继续使用 Web 遗留接口；对可用性有更高要求时，可选择配置 Google 官方 Cloud Translation API。
@@ -84,6 +84,30 @@ https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tests\run-translation-tests.ps1
+```
+
+## 本地英汉、汉英词典
+
+原 Bing 翻译面板已改为“本地词典”，不再请求 Bing。输入词语并按 Enter 会同时启动 Google 翻译和离线查词；本地词典面板的刷新按钮只查询词典，不触发 Google 请求。主窗口原有“查词”和单词卡双击查词也可使用扩展词库。
+
+已安装的新增词库：
+
+| 词库 | 实际词条数 | 用途 |
+| --- | ---: | --- |
+| [ECDICT 1.0.28](https://github.com/skywind3000/ECDICT) | 3,402,564 | 英汉及英文释义，含单词、短语、专名、音标和词形信息 |
+| [CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cedict) | 125,324 | 简体、繁体中文词语查英语释义和拼音 |
+
+另生成 6,368,485 条中文释义反查索引，以及 455,009 条英语词形索引。支持 `went` 等词形还原、简繁体查询及英语释义反查。反查结果会单独注明来源，不当作人工编写的汉英释义。
+
+仍优先显示 `user-dict.txt` 中的自定义释义，并兼容原来的 `dict.db`、`Dictionary.db`。长句未直接收录时，按词或词组显示释义；这属于查词，不是整句机器翻译。
+
+新增数据库位于 `dictionaries/ecdict.db` 与 `dictionaries/offline-index.db`，合计约 1.40 GiB。它们不上传到同步服务器，也不提交到 Git。复制软件到另一台电脑时，请同时复制 `dictionaries/` 目录。来源、许可、下载 SHA-256 和真实数量保存在该目录的 `manifest.json` 与 `licenses/` 中，安装与更新步骤见 [词典说明](dictionaries/README.md)。
+
+验证本地词典及导入器：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\run-dictionary-tests.ps1
+python -m unittest discover -s tests -p test_dictionary_import.py
 ```
 
 ## 局域网同步
@@ -130,6 +154,8 @@ Test-NetConnection 172.16.204.193 -Port 17890
 - `wordmap.wordmap`：默认单词图数据。
 - `blank.wordmap`：新建单词图时使用的空白模板。
 - `dict.db`、`Dictionary.db`、`user-dict.txt`：本地词典数据。
+- `dictionaries/`：扩展词库、索引、来源清单与许可证。
+- `scripts/install-dictionaries.ps1`：下载开放词库并生成离线索引。
 - `images/`：添加到单词图中的本地图片。
 - `deploy/raspberry-pi/`：树莓派同步服务器及 systemd 服务文件。
 - `src/PandanciClone/`：Windows 客户端源代码和构建脚本。

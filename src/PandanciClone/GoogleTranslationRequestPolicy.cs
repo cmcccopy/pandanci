@@ -30,6 +30,7 @@ namespace PandanciClone
             public DateTime NextRequestUtc;
             public DateTime RetryNotBeforeUtc;
             public int RateLimitCount;
+            public int LastStatusCode;
         }
 
         private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
@@ -80,6 +81,7 @@ namespace PandanciClone
                     {
                         if (ex.IsRateLimited || ex.StatusCode == 503)
                         {
+                            state.LastStatusCode = ex.StatusCode;
                             state.RateLimitCount = Math.Min(4, state.RateLimitCount + 1);
                             int baseSeconds = ex.StatusCode == 503 ? 60 : (official ? 60 : 300);
                             double seconds = Math.Min(1800, baseSeconds * Math.Pow(2, state.RateLimitCount - 1));
@@ -110,8 +112,9 @@ namespace PandanciClone
             string reason = official
                 ? "Google 官方接口限流或暂时不可用，请检查 Cloud Translation 的配额、用量和结算状态。"
                 : "Google 公共接口已限流或暂时不可用。稳定使用请在“设置 → Google 官方接口...”配置自己的 API Key。";
-            return new InvalidOperationException(reason + " 将暂停请求约 " + Math.Max(1, seconds).ToString("0", CultureInfo.InvariantCulture)
-                + " 秒，避免重复触发限制；期间可使用右侧 Bing 结果。");
+            return new InvalidOperationException(reason + "（HTTP " + state.LastStatusCode.ToString(CultureInfo.InvariantCulture)
+                + "）将暂停请求约 " + Math.Max(1, seconds).ToString("0", CultureInfo.InvariantCulture)
+                + " 秒；期间可使用右侧离线词典。");
         }
 
         internal static DateTime ParseRetryAfter(string value, DateTime now)

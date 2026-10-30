@@ -44,7 +44,7 @@ namespace PandanciClone
         private readonly RoundedPanel _inputCard;
         private readonly RoundedPanel _directionCard;
         private readonly ResultCardUi _google;
-        private readonly ResultCardUi _bing;
+        private readonly ResultCardUi _localDictionary;
         private readonly Timer _outsideClickTimer;
         private readonly ToolTip _toolTip;
 
@@ -52,7 +52,7 @@ namespace PandanciClone
         private string _translatedText = "";
         private string _googleText = "";
         private string _googleDirectionText = "";
-        private string _bingText = "";
+        private string _localDictionaryText = "";
         private bool _pinned;
         private bool _lastMouseDown;
         private bool _hasLocation;
@@ -69,6 +69,7 @@ namespace PandanciClone
         public event EventHandler SaveWordRequested;
         public event EventHandler PopupLocationChanged;
         public event EventHandler TranslateTextRequested;
+        public event EventHandler LocalDictionaryLookupRequested;
         public event EventHandler Dismissed;
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -173,7 +174,7 @@ namespace PandanciClone
             {
                 SetSourceText("");
                 _googleText = "";
-                _bingText = "";
+                _localDictionaryText = "";
                 UpdateResults();
                 UpdateButtons();
             };
@@ -215,8 +216,8 @@ namespace PandanciClone
             _google = MakeResultCard("Google");
             Controls.Add(_google.Card);
 
-            _bing = MakeResultCard("Bing");
-            Controls.Add(_bing.Card);
+            _localDictionary = MakeResultCard("本地词典");
+            Controls.Add(_localDictionary.Card);
 
             _statusLabel = new Label();
             _statusLabel.AutoEllipsis = true;
@@ -264,9 +265,9 @@ namespace PandanciClone
             WireDrag(_google.Card);
             WireDrag(_google.Header);
             WireDrag(_google.Title);
-            WireDrag(_bing.Card);
-            WireDrag(_bing.Header);
-            WireDrag(_bing.Title);
+            WireDrag(_localDictionary.Card);
+            WireDrag(_localDictionary.Header);
+            WireDrag(_localDictionary.Title);
             SetToolTips();
             LayoutControls();
             UpdateDirectionLabels();
@@ -389,11 +390,11 @@ namespace PandanciClone
             SetSourceText(sourceText ?? "");
             _translatedText = "";
             _googleText = "正在翻译...";
-            _bingText = "正在翻译...";
+            _localDictionaryText = "正在查词...";
             _sourceBox.ReadOnly = false;
             UpdateDirectionLabels();
             UpdateResults();
-            _statusLabel.Text = TranslationService.DetectTarget(_sourceText, GetLanguageMode()).DirectionText + " · Google + Bing";
+            _statusLabel.Text = TranslationService.DetectTarget(_sourceText, GetLanguageMode()).DirectionText + " · Google + 本地词典";
             UpdateButtons();
             ShowPopup(true);
         }
@@ -405,7 +406,7 @@ namespace PandanciClone
             _sourceBox.ReadOnly = false;
             _translatedText = "";
             _googleText = "";
-            _bingText = "";
+            _localDictionaryText = "";
             UpdateDirectionLabels();
             UpdateResults();
             _statusLabel.Text = sourceName + " · Enter 翻译 / Shift+Enter 换行";
@@ -419,9 +420,9 @@ namespace PandanciClone
             _sourceBox.ReadOnly = true;
             _translatedText = "";
             _googleText = "";
-            _bingText = "";
+            _localDictionaryText = "";
             _google.TextBox.Text = "正在读取选中文本...";
-            _bing.TextBox.Text = "";
+            _localDictionary.TextBox.Text = "";
             _statusLabel.Text = "Alt+A";
             UpdateDirectionLabels();
             UpdateButtons();
@@ -434,9 +435,9 @@ namespace PandanciClone
             _sourceBox.ReadOnly = true;
             _translatedText = "";
             _googleText = "";
-            _bingText = "";
+            _localDictionaryText = "";
             _google.TextBox.Text = "正在识别截图文字...";
-            _bing.TextBox.Text = "";
+            _localDictionary.TextBox.Text = "";
             _statusLabel.Text = "Alt+S OCR";
             UpdateDirectionLabels();
             UpdateButtons();
@@ -453,7 +454,7 @@ namespace PandanciClone
             _googleText = string.Equals(result.Provider, "Google", StringComparison.OrdinalIgnoreCase)
                 ? (string.IsNullOrWhiteSpace(result.Error) ? result.TranslatedText : result.Error)
                 : "";
-            _bingText = string.Equals(result.Provider, "Bing", StringComparison.OrdinalIgnoreCase)
+            _localDictionaryText = string.Equals(result.Provider, "LocalDictionary", StringComparison.OrdinalIgnoreCase)
                 ? (string.IsNullOrWhiteSpace(result.Error) ? result.TranslatedText : result.Error)
                 : "";
             UpdateDirectionLabels();
@@ -466,10 +467,10 @@ namespace PandanciClone
         public void ShowProviderResult(TranslationResult result)
         {
             if (result == null || !Visible) return;
-            if (!string.IsNullOrWhiteSpace(result.SourceText)) SetSourceText(result.SourceText);
+            if (!string.Equals(result.SourceText ?? "", SourceText, StringComparison.Ordinal)) return;
 
             string text = string.IsNullOrWhiteSpace(result.Error) ? result.TranslatedText : result.Error;
-            if (string.Equals(result.Provider, "Bing", StringComparison.OrdinalIgnoreCase)) _bingText = text;
+            if (string.Equals(result.Provider, "LocalDictionary", StringComparison.OrdinalIgnoreCase)) _localDictionaryText = text;
             else
             {
                 _googleText = text;
@@ -480,7 +481,14 @@ namespace PandanciClone
             UpdateDirectionLabels();
             UpdateResults();
             string direction = string.IsNullOrWhiteSpace(_googleDirectionText) ? result.DirectionText : _googleDirectionText;
-            _statusLabel.Text = (string.IsNullOrWhiteSpace(direction) ? TranslationService.DetectTarget(_sourceText, GetLanguageMode()).DirectionText : direction) + " · Google + Bing";
+            _statusLabel.Text = (string.IsNullOrWhiteSpace(direction) ? TranslationService.DetectTarget(_sourceText, GetLanguageMode()).DirectionText : direction) + " · Google + 本地词典";
+            UpdateButtons();
+        }
+
+        public void ShowDictionaryLoading()
+        {
+            _localDictionaryText = "正在查词...";
+            UpdateResults();
             UpdateButtons();
         }
 
@@ -495,7 +503,7 @@ namespace PandanciClone
         {
             if (_pinButton == null || _closeButton == null || _titleLabel == null || _languageModeBox == null
                 || _inputCard == null || _directionCard == null || _pasteButton == null || _resizeGrip == null
-                || _google == null || _bing == null || _statusLabel == null || _copyAllButton == null || _saveButton == null)
+                || _google == null || _localDictionary == null || _statusLabel == null || _copyAllButton == null || _saveButton == null)
             {
                 return;
             }
@@ -526,15 +534,15 @@ namespace PandanciClone
             int resultTop = _directionCard.Bottom + 10;
             int bottomTop = ClientSize.Height - 38;
             int available = Math.Max(108, bottomTop - resultTop - 10);
-            int googleHeight = _google.Collapsed ? 36 : Math.Max(78, available / (_bing.Collapsed ? 1 : 2));
-            int bingHeight = _bing.Collapsed ? 36 : Math.Max(78, available - googleHeight - 8);
-            if (_google.Collapsed && !_bing.Collapsed) bingHeight = Math.Max(78, available - googleHeight - 8);
-            if (!_google.Collapsed && _bing.Collapsed) googleHeight = Math.Max(78, available - bingHeight - 8);
+            int googleHeight = _google.Collapsed ? 36 : Math.Max(78, available / (_localDictionary.Collapsed ? 1 : 2));
+            int bingHeight = _localDictionary.Collapsed ? 36 : Math.Max(78, available - googleHeight - 8);
+            if (_google.Collapsed && !_localDictionary.Collapsed) bingHeight = Math.Max(78, available - googleHeight - 8);
+            if (!_google.Collapsed && _localDictionary.Collapsed) googleHeight = Math.Max(78, available - bingHeight - 8);
 
             _google.Card.SetBounds(margin, resultTop, contentWidth, googleHeight);
             LayoutResultCard(_google);
-            _bing.Card.SetBounds(margin, _google.Card.Bottom + 8, contentWidth, bingHeight);
-            LayoutResultCard(_bing);
+            _localDictionary.Card.SetBounds(margin, _google.Card.Bottom + 8, contentWidth, bingHeight);
+            LayoutResultCard(_localDictionary);
 
             _statusLabel.SetBounds(margin + 2, bottomTop, Math.Max(80, contentWidth - 152), 26);
             _copyAllButton.SetBounds(ClientSize.Width - 142, bottomTop, 66, 28);
@@ -575,9 +583,9 @@ namespace PandanciClone
         private void UpdateResults()
         {
             _google.TextBox.Text = string.IsNullOrWhiteSpace(_googleText) ? "等待结果..." : _googleText;
-            _bing.TextBox.Text = string.IsNullOrWhiteSpace(_bingText) ? "等待结果..." : _bingText;
+            _localDictionary.TextBox.Text = string.IsNullOrWhiteSpace(_localDictionaryText) ? "等待结果..." : _localDictionaryText;
             _translatedText = "Google" + Environment.NewLine + _google.TextBox.Text + Environment.NewLine + Environment.NewLine
-                + "Bing" + Environment.NewLine + _bing.TextBox.Text;
+                + "本地词典" + Environment.NewLine + _localDictionary.TextBox.Text;
         }
 
         private string BuildCopyAllText()
@@ -588,11 +596,11 @@ namespace PandanciClone
                 text.AppendLine("Google");
                 text.AppendLine(_googleText);
             }
-            if (HasRealResult(_bingText))
+            if (HasRealResult(_localDictionaryText))
             {
                 if (text.Length > 0) text.AppendLine();
-                text.AppendLine("Bing");
-                text.AppendLine(_bingText);
+                text.AppendLine("本地词典");
+                text.AppendLine(_localDictionaryText);
             }
             return text.ToString().Trim();
         }
@@ -607,9 +615,9 @@ namespace PandanciClone
             _normalizeButton.Enabled = hasSource;
             _clearButton.Enabled = hasSource;
             _saveButton.Enabled = hasSource;
-            _copyAllButton.Enabled = HasRealResult(_googleText) || HasRealResult(_bingText);
+            _copyAllButton.Enabled = HasRealResult(_googleText) || HasRealResult(_localDictionaryText);
             UpdateResultButtons(_google, _googleText);
-            UpdateResultButtons(_bing, _bingText);
+            UpdateResultButtons(_localDictionary, _localDictionaryText);
         }
 
         private static void UpdateResultButtons(ResultCardUi ui, string text)
@@ -624,7 +632,7 @@ namespace PandanciClone
         private static bool HasRealResult(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return false;
-            return text != "正在翻译..." && text != "等待结果...";
+            return text != "正在翻译..." && text != "正在查词..." && text != "等待结果...";
         }
 
         private void TogglePinned()
@@ -632,7 +640,7 @@ namespace PandanciClone
             _pinned = !_pinned;
             _pinButton.Text = _pinned ? "📍" : "📌";
             _pinButton.BackColor = _pinned ? Color.FromArgb(225, 235, 255) : Color.White;
-            _statusLabel.Text = _pinned ? "已钉住" : "Google + Bing";
+            _statusLabel.Text = _pinned ? "已钉住" : "Google + 本地词典";
         }
 
         private void SetSourceText(string text)
@@ -774,7 +782,8 @@ namespace PandanciClone
             _toolTip.SetToolTip(_saveButton, "把当前输入保存为单词卡");
             _toolTip.SetToolTip(_resizeGrip, "拖动调整窗口大小");
             SetResultToolTips(_google);
-            SetResultToolTips(_bing);
+            SetResultToolTips(_localDictionary);
+            _toolTip.SetToolTip(_localDictionary.RetryButton, "重新查询本地中英词典");
         }
 
         private void SetResultToolTips(ResultCardUi ui)
@@ -903,7 +912,15 @@ namespace PandanciClone
             ui.Card.Controls.Add(ui.BackButton);
 
             ui.RetryButton = MakeCardButton("↻");
-            ui.RetryButton.Click += delegate { RaiseTranslateTextRequested(); };
+            ui.RetryButton.Click += delegate
+            {
+                if (ui == _localDictionary)
+                {
+                    EventHandler handler = LocalDictionaryLookupRequested;
+                    if (handler != null) handler(this, EventArgs.Empty);
+                }
+                else RaiseTranslateTextRequested();
+            };
             ui.Card.Controls.Add(ui.RetryButton);
 
             ui.CollapseButton = MakeCardButton("⌃");
